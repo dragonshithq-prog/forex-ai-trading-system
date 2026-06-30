@@ -160,6 +160,22 @@ class BrokerPlugin(ABC):
         """Get order history."""
         pass
 
+    async def test_connection(self, credentials: dict[str, Any]) -> bool:
+        """Test connection with given credentials. Override in implementations."""
+        try:
+            creds = BrokerCredentials(
+                broker_type=self.broker_type,
+                api_key=credentials.get("api_key"),
+                api_secret=credentials.get("api_secret"),
+                password=credentials.get("password"),
+                host=credentials.get("host"),
+                port=credentials.get("port"),
+                environment=credentials.get("environment", "practice"),
+            )
+            return await self.connect(creds)
+        except Exception:
+            return False
+
 
 class BrokerGateway:
     """
@@ -186,11 +202,28 @@ class BrokerGateway:
         """Get plugin by broker type."""
         return self._plugins.get(broker_type)
 
+    def _to_broker_credentials(self, credentials: Any) -> BrokerCredentials:
+        """Convert credentials dict or object to BrokerCredentials."""
+        if isinstance(credentials, BrokerCredentials):
+            return credentials
+        if isinstance(credentials, dict):
+            return BrokerCredentials(
+                broker_type=BrokerType.OANDA,
+                api_key=credentials.get("api_key"),
+                api_secret=credentials.get("api_secret"),
+                account_id=credentials.get("account_id") or credentials.get("account_number"),
+                password=credentials.get("password"),
+                host=credentials.get("host"),
+                port=credentials.get("port"),
+                environment=credentials.get("environment", "practice"),
+            )
+        return credentials
+
     async def connect(
         self,
         connection_id: UUID,
         broker_type: BrokerType,
-        credentials: BrokerCredentials,
+        credentials: BrokerCredentials | dict[str, Any],
     ) -> bool:
         """
         Connect to a broker.
@@ -198,7 +231,7 @@ class BrokerGateway:
         Args:
             connection_id: Unique connection identifier
             broker_type: Type of broker
-            credentials: Authentication credentials
+            credentials: Authentication credentials (object or dict)
 
         Returns:
             True if connected successfully
@@ -207,6 +240,9 @@ class BrokerGateway:
         if not plugin:
             logger.error("broker_plugin_not_found", broker=broker_type.value)
             return False
+
+        if isinstance(credentials, dict):
+            credentials = self._to_broker_credentials(credentials)
 
         self._connection_status[connection_id] = ConnectionStatus.CONNECTING
 
@@ -276,3 +312,7 @@ class BrokerGateway:
             return None
         # In production, this would check spreads and latency
         return connected[0]
+
+
+# Global broker gateway instance
+broker_gateway = BrokerGateway()

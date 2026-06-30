@@ -86,7 +86,20 @@ class BrokerAccountResponse(BaseModel):
     free_margin: float
     unrealized_pnl: float
     is_active: bool
+    has_credentials: bool = False
     last_sync: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BrokerAccountCreateExtended(BrokerAccountCreate):
+    pass
+
+
+class BrokerAccountUpdateExtended(BrokerAccountUpdate):
+    api_key: str | None = None
+    api_secret: str | None = None
+    password: str | None = None
+    host: str | None = None
+    port: int | None = None

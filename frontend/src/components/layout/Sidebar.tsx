@@ -10,6 +10,7 @@ import {
   BarChart3,
   FlaskConical,
   Shield,
+  PlugZap,
   Settings,
   BookOpen,
   ChevronLeft,
@@ -55,6 +56,12 @@ const NAV_ITEMS = [
     label: 'Risk',
     icon: Shield,
     description: 'Risk management',
+  },
+  {
+    href: '/broker-connections',
+    label: 'Brokers',
+    icon: PlugZap,
+    description: 'Broker connections',
   },
   {
     href: '/journal',

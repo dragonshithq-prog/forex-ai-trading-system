@@ -9,13 +9,13 @@
 @layer base {
   :root {
     /* Dark theme (default for trading terminal) */
-    --background: 0 0% 4%;        /* #0a0a0a */
-    --foreground: 0 0% 95%;       /* #f2f2f2 */
-    --card: 0 0% 7%;              /* #111 */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 7%;
     --card-foreground: 0 0% 95%;
     --popover: 0 0% 9%;
     --popover-foreground: 0 0% 95%;
-    --primary: 217 91% 60%;       /* #3b82f6 blue accent */
+    --primary: 217 91% 60%;
     --primary-foreground: 0 0% 100%;
     --secondary: 0 0% 12%;
     --secondary-foreground: 0 0% 90%;
@@ -23,19 +23,19 @@
     --muted-foreground: 0 0% 50%;
     --accent: 217 91% 60%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 0 84% 60%;     /* #ef4444 */
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 13%;           /* #222 */
+    --border: 0 0% 13%;
     --input: 0 0% 13%;
     --ring: 217 91% 60%;
     --radius: 0.5rem;
 
     /* Trading-specific tokens */
-    --profit: 142 71% 45%;        /* #22c55e */
-    --loss: 0 84% 60%;            /* #ef4444 */
-    --buy: 217 91% 60%;           /* #3b82f6 */
-    --sell: 25 95% 53%;           /* #f97316 */
-    --warning: 38 92% 50%;        /* #f59e0b */
+    --profit: 142 71% 45%;
+    --loss: 0 84% 60%;
+    --buy: 217 91% 60%;
+    --sell: 25 95% 53%;
+    --warning: 38 92% 50%;
     --surface: 0 0% 7%;
     --surface-elevated: 0 0% 10%;
   }
@@ -63,6 +63,90 @@
     --surface: 0 0% 97%;
     --surface-elevated: 0 0% 100%;
   }
+
+  /* --- Premium Theme: Midnight Blue --- */
+  .midnight {
+    --background: 220 25% 8%;
+    --foreground: 0 0% 93%;
+    --card: 220 20% 12%;
+    --card-foreground: 0 0% 93%;
+    --popover: 220 20% 14%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 217 85% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 15% 16%;
+    --secondary-foreground: 0 0% 88%;
+    --muted: 220 10% 18%;
+    --muted-foreground: 220 5% 55%;
+    --accent: 180 70% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 15% 20%;
+    --input: 220 15% 18%;
+    --ring: 217 85% 55%;
+    --surface: 220 22% 10%;
+    --surface-elevated: 220 20% 14%;
+  }
+
+  /* --- Premium Theme: Emerald --- */
+  .emerald {
+    --background: 160 20% 5%;
+    --foreground: 0 0% 95%;
+    --card: 160 15% 9%;
+    --card-foreground: 0 0% 95%;
+    --popover: 160 15% 11%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 142 70% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 160 10% 14%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 160 8% 16%;
+    --muted-foreground: 160 5% 50%;
+    --accent: 142 70% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 80% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 160 10% 16%;
+    --input: 160 10% 14%;
+    --ring: 142 70% 45%;
+    --profit: 142 55% 50%;
+    --loss: 0 75% 55%;
+    --buy: 142 70% 45%;
+    --sell: 25 90% 50%;
+    --surface: 160 18% 7%;
+    --surface-elevated: 160 15% 11%;
+  }
+
+  /* --- Premium Theme: Matrix --- */
+  .matrix {
+    --background: 120 60% 3%;
+    --foreground: 120 50% 80%;
+    --card: 120 40% 5%;
+    --card-foreground: 120 50% 80%;
+    --popover: 120 35% 7%;
+    --popover-foreground: 120 50% 80%;
+    --primary: 120 100% 45%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 120 25% 10%;
+    --secondary-foreground: 120 40% 70%;
+    --muted: 120 20% 8%;
+    --muted-foreground: 120 15% 40%;
+    --accent: 120 100% 50%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 120 30% 12%;
+    --input: 120 25% 10%;
+    --ring: 120 100% 45%;
+    --profit: 120 90% 50%;
+    --loss: 0 65% 50%;
+    --buy: 120 100% 45%;
+    --sell: 30 90% 50%;
+    --warning: 50 90% 50%;
+    --surface: 120 50% 4%;
+    --surface-elevated: 120 35% 7%;
+  }
 }
 
 @layer base {
@@ -82,14 +166,12 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
-  /* Monospace for all trading numbers */
   .font-trading {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
     letter-spacing: -0.01em;
   }
 
-  /* Scrollbar styling (dark theme) */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -107,13 +189,11 @@
     @apply bg-muted;
   }
 
-  /* Focus visible ring — accessible */
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
   }
 
-  /* Price animation classes */
   .price-up {
     animation: priceFlashUp 0.4s ease-out;
   }
@@ -135,36 +215,48 @@
   .bg-buy\/15 { background-color: hsl(var(--buy) / 0.15); }
   .bg-sell\/15 { background-color: hsl(var(--sell) / 0.15); }
 
-  /* Glassmorphism surface */
   .glass {
     background: hsl(var(--card) / 0.8);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
 
-  /* Grid background pattern */
   .bg-grid {
     background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
                       linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
     background-size: 24px 24px;
   }
 
-  /* Trading number formatting */
   .tabular-nums {
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
   }
 
-  /* Hide scrollbar but keep scrollable */
   .scrollbar-hidden {
     scrollbar-width: none;
   }
   .scrollbar-hidden::-webkit-scrollbar {
     display: none;
   }
+
+  .theme-preview {
+    transition: all 0.3s ease;
+  }
+
+  .theme-preview:hover {
+    transform: scale(1.05);
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 5px hsl(var(--primary) / 0.3); }
+    50% { box-shadow: 0 0 20px hsl(var(--primary) / 0.6); }
+  }
+
+  .glow-active {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

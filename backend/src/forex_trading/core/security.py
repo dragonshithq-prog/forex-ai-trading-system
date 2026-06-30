@@ -1,9 +1,13 @@
-"""Security module - JWT, authentication, and authorization."""
+"""Security module - JWT, authentication, authorization, and credential encryption."""
 
+import base64
+import hashlib
+import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
+from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
@@ -15,6 +19,27 @@ logger = structlog.get_logger()
 settings = get_settings()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _get_fernet_key() -> bytes:
+    """Derive a Fernet-compatible key from the app's SECRET_KEY."""
+    raw = settings.SECRET_KEY.encode("utf-8")
+    key = base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
+    return key
+
+
+def encrypt_credentials(credentials: dict[str, Any]) -> str:
+    """Encrypt broker credentials dict to a Fernet token string."""
+    fernet = Fernet(_get_fernet_key())
+    data = json.dumps(credentials).encode("utf-8")
+    return fernet.encrypt(data).decode("utf-8")
+
+
+def decrypt_credentials(token: str) -> dict[str, Any]:
+    """Decrypt a Fernet token string back to credentials dict."""
+    fernet = Fernet(_get_fernet_key())
+    data = fernet.decrypt(token.encode("utf-8"))
+    return json.loads(data.decode("utf-8"))
 
 
 class TokenPayload(BaseModel):
