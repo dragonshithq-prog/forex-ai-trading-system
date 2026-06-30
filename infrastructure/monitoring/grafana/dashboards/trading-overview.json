@@ -1,0 +1,365 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus data source for Forex Trading",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "title": "Forex Trading — Overview",
+  "uid": "forex-trading-overview",
+  "description": "Production monitoring dashboard for the Forex AI Trading Platform",
+  "tags": ["forex", "trading", "production"],
+  "timezone": "browser",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "🔴 System Health",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+
+    {
+      "id": 2,
+      "title": "API Uptime",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "short"
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus-forex" }, "expr": "up{job=\"forex-backend\"}", "legendFormat": "Backend" }],
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 }
+    },
+
+    {
+      "id": 3,
+      "title": "API Request Rate (req/s)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus-forex" }, "expr": "sum(rate(http_requests_total{job=\"forex-backend\"}[1m]))", "legendFormat": "Total req/s" }],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 }
+    },
+
+    {
+      "id": 4,
+      "title": "API Error Rate (%)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "sum(rate(http_requests_total{job=\"forex-backend\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"forex-backend\"}[5m])) * 100",
+        "legendFormat": "Error rate %"
+      }],
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 }
+    },
+
+    {
+      "id": 5,
+      "title": "API P95 Latency (ms)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 200 }, { "color": "red", "value": 500 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"forex-backend\"}[5m])) by (le)) * 1000",
+        "legendFormat": "P95 ms"
+      }],
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 }
+    },
+
+    {
+      "id": 6,
+      "title": "Active WebSocket Connections",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 1000 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus-forex" }, "expr": "forex_websocket_connections_active", "legendFormat": "WS connections" }],
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 }
+    },
+
+    {
+      "id": 7,
+      "title": "Circuit Breaker Status",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "options": { "0": { "text": "CLOSED", "color": "green" }, "1": { "text": "OPEN", "color": "red" } }, "type": "value" }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus-forex" }, "expr": "max(forex_circuit_breaker_state{state=\"open\"})", "legendFormat": "Circuit Breaker" }],
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 }
+    },
+
+    {
+      "id": 10,
+      "title": "📈 Trading Activity",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+
+    {
+      "id": 11,
+      "title": "P&L Over Time (USD)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": -1000 }] },
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list" } },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "forex_portfolio_pnl_usd",
+        "legendFormat": "Portfolio P&L ($)"
+      }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }
+    },
+
+    {
+      "id": 12,
+      "title": "Open Positions Count",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "sum(forex_open_positions_count) by (currency_pair)",
+        "legendFormat": "{{ currency_pair }}"
+      }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 }
+    },
+
+    {
+      "id": 13,
+      "title": "AI Signal Count (per minute)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 5 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+          "expr": "rate(forex_ai_signals_generated_total[1m]) * 60",
+          "legendFormat": "Signals/min ({{ signal_type }})"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 }
+    },
+
+    {
+      "id": 14,
+      "title": "Trade Execution Latency (ms)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 1 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }] }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+          "expr": "histogram_quantile(0.50, rate(forex_trade_execution_duration_seconds_bucket[5m])) * 1000",
+          "legendFormat": "P50 (median)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+          "expr": "histogram_quantile(0.95, rate(forex_trade_execution_duration_seconds_bucket[5m])) * 1000",
+          "legendFormat": "P95"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+          "expr": "histogram_quantile(0.99, rate(forex_trade_execution_duration_seconds_bucket[5m])) * 1000",
+          "legendFormat": "P99"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 }
+    },
+
+    {
+      "id": 20,
+      "title": "💻 Infrastructure",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }
+    },
+
+    {
+      "id": 21,
+      "title": "Container CPU Usage (%)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": { "lineWidth": 1, "fillOpacity": 5 }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[5m])) by (name) * 100",
+        "legendFormat": "{{ name }}"
+      }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 }
+    },
+
+    {
+      "id": 22,
+      "title": "Container Memory Usage (MB)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "custom": { "lineWidth": 1, "fillOpacity": 5 }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "sum(container_memory_working_set_bytes{name!=\"\"}) by (name) / 1024 / 1024",
+        "legendFormat": "{{ name }}"
+      }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 }
+    },
+
+    {
+      "id": 23,
+      "title": "Redis Memory Used (MB)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "custom": { "lineWidth": 2 }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "redis_memory_used_bytes / 1024 / 1024",
+        "legendFormat": "Redis memory (MB)"
+      }],
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 31 }
+    },
+
+    {
+      "id": 24,
+      "title": "PostgreSQL Active Connections",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2 }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "pg_stat_database_numbackends{datname=\"forex_trading\"}",
+        "legendFormat": "Active connections"
+      }],
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 31 }
+    },
+
+    {
+      "id": 25,
+      "title": "Kafka Consumer Lag",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 10000 }] }
+        }
+      },
+      "targets": [{
+        "datasource": { "type": "prometheus", "uid": "prometheus-forex" },
+        "expr": "kafka_consumer_group_lag_sum",
+        "legendFormat": "{{ group }} — {{ topic }}"
+      }],
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 31 }
+    }
+  ]
+}

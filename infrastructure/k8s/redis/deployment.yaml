@@ -1,0 +1,169 @@
+# =============================================================================
+# Redis Deployment — Forex AI Trading Platform
+# Persistence: AOF + RDB snapshots via emptyDir → PVC
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: forex-trading
+  labels:
+    app: redis
+    tier: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  strategy:
+    type: Recreate                      # Recreate to avoid two Redis instances sharing volume
+
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+
+      securityContext:
+        runAsUser:    999
+        runAsGroup:   999
+        fsGroup:      999
+        seccompProfile:
+          type: RuntimeDefault
+
+      serviceAccountName: redis-sa
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - redis-server
+            - /etc/redis/redis.conf
+          ports:
+            - name: redis
+              containerPort: 6379
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "256Mi"
+            limits:
+              cpu:    "500m"
+              memory: "1Gi"
+
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secrets
+                  key:  REDIS_PASSWORD
+
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a $REDIS_PASSWORD ping | grep PONG
+            initialDelaySeconds: 15
+            periodSeconds:       20
+            timeoutSeconds:      5
+            failureThreshold:    3
+
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli -a $REDIS_PASSWORD ping | grep PONG
+            initialDelaySeconds: 5
+            periodSeconds:       5
+            timeoutSeconds:      3
+            failureThreshold:    5
+
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /etc/redis
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: redis-config
+          configMap:
+            name: redis-config
+        - name: tmp
+          emptyDir: {}
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: forex-trading
+  labels:
+    app: redis
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: forex-trading
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - name:       redis
+      port:       6379
+      targetPort: redis
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: forex-trading
+data:
+  redis.conf: |
+    requirepass ${REDIS_PASSWORD}
+    appendonly yes
+    appendfsync everysec
+    maxmemory 512mb
+    maxmemory-policy allkeys-lru
+    tcp-keepalive 300
+    timeout 0
+    save 900 1
+    save 300 10
+    save 60 10000
+    loglevel notice
+    databases 16
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-sa
+  namespace: forex-trading

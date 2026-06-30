@@ -1,0 +1,247 @@
+# =============================================================================
+# Backend Deployment — Forex AI Trading Platform
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: forex-trading
+  labels:
+    app: backend
+    tier: api
+    version: "1.0.0"
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+
+  selector:
+    matchLabels:
+      app: backend
+      tier: api
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1           # Allow 1 extra pod during update
+      maxUnavailable: 0     # Zero downtime — never remove a pod before new one is ready
+
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8000"
+        prometheus.io/path:   "/metrics"
+    spec:
+
+      # ── Security Context (Pod) ─────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    10001
+        runAsGroup:   10001
+        fsGroup:      10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ── Service Account ────────────────────────────────────────────────────
+      serviceAccountName: backend-sa
+      automountServiceAccountToken: false
+
+      # ── Graceful Termination ───────────────────────────────────────────────
+      terminationGracePeriodSeconds: 60
+
+      # ── Anti-Affinity: Spread replicas across nodes ────────────────────────
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - backend
+              topologyKey: "kubernetes.io/hostname"
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - backend
+                topologyKey: "topology.kubernetes.io/zone"
+
+      # ── Topology Spread (balance across zones) ─────────────────────────────
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: backend
+
+      # ── Init Containers: Wait for DB ───────────────────────────────────────
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres-service 5432; do
+                echo "Waiting for PostgreSQL..."; sleep 2;
+              done
+              echo "PostgreSQL is ready."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z redis-service 6379; do
+                echo "Waiting for Redis..."; sleep 2;
+              done
+              echo "Redis is ready."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: backend
+          image: REGISTRY_PLACEHOLDER/backend:IMAGE_TAG_PLACEHOLDER
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          # ── Security Context (Container) ───────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          # ── Resource Limits ────────────────────────────────────────────────
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "1000m"
+              memory: "1Gi"
+
+          # ── Environment: Non-Secret Config ────────────────────────────────
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secrets
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+          # ── Liveness Probe ─────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              httpHeaders:
+                - name: X-Health-Check
+                  value: liveness
+            initialDelaySeconds: 30
+            periodSeconds:       15
+            timeoutSeconds:      10
+            failureThreshold:    3
+            successThreshold:    1
+
+          # ── Readiness Probe ────────────────────────────────────────────────
+          readinessProbe:
+            httpGet:
+              path: /health/detailed
+              port: http
+              httpHeaders:
+                - name: X-Health-Check
+                  value: readiness
+            initialDelaySeconds: 10
+            periodSeconds:       5
+            timeoutSeconds:      5
+            failureThreshold:    3
+            successThreshold:    1
+
+          # ── Startup Probe (gives extra time on cold start) ─────────────────
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold:    30
+            periodSeconds:       5
+
+          # ── Volume Mounts ──────────────────────────────────────────────────
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /app/logs
+
+      # ── Volumes ────────────────────────────────────────────────────────────
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+
+      # ── Image Pull Secrets ────────────────────────────────────────────────
+      imagePullSecrets:
+        - name: ecr-registry-secret
+
+---
+# ── ConfigMap: Non-sensitive Backend Configuration ────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: forex-trading
+data:
+  ENVIRONMENT:    "production"
+  LOG_LEVEL:      "INFO"
+  WORKERS:        "4"
+  CORS_ORIGINS:   "https://yourdomain.com"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+
+---
+# ── ServiceAccount for Backend Pods ──────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-sa
+  namespace: forex-trading
+  labels:
+    app: backend
+  annotations:
+    # AWS IRSA: attach IAM role for Secrets Manager / S3 access
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/forex-trading-backend-role"

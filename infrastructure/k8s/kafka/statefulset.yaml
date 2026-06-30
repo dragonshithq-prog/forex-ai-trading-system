@@ -1,0 +1,201 @@
+# =============================================================================
+# Kafka StatefulSet (KRaft mode — no Zookeeper) — Forex AI Trading Platform
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: forex-trading
+  labels:
+    app: kafka
+    tier: streaming
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+  podManagementPolicy: Parallel
+
+  template:
+    metadata:
+      labels:
+        app: kafka
+        tier: streaming
+    spec:
+
+      securityContext:
+        runAsUser:    1001
+        runAsGroup:   1001
+        fsGroup:      1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      serviceAccountName: kafka-sa
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - kafka
+              topologyKey: "kubernetes.io/hostname"
+
+      containers:
+        - name: kafka
+          image: bitnami/kafka:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: kafka-internal
+              containerPort: 9092
+            - name: kafka-ctrl
+              containerPort: 9093
+            - name: kafka-external
+              containerPort: 9094
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          resources:
+            requests:
+              cpu:    "500m"
+              memory: "1Gi"
+            limits:
+              cpu:    "2000m"
+              memory: "4Gi"
+
+          env:
+            # KRaft mode — node ID is derived from the pod ordinal
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KAFKA_CFG_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['kafka.ordinal']
+            - name: KAFKA_CFG_PROCESS_ROLES
+              value: "broker,controller"
+            - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+              value: "0@kafka-0.kafka-headless:9093,1@kafka-1.kafka-headless:9093,2@kafka-2.kafka-headless:9093"
+            - name: KAFKA_CFG_LISTENERS
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+            - name: KAFKA_CFG_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://$(MY_POD_NAME).kafka-headless.forex-trading.svc.cluster.local:9092"
+            - name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+              value: "CONTROLLER"
+            - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+              value: "PLAINTEXT"
+            - name: KAFKA_KRAFT_CLUSTER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-secrets
+                  key:  KAFKA_CLUSTER_ID
+            # Topic defaults
+            - name: KAFKA_CFG_NUM_PARTITIONS
+              value: "6"
+            - name: KAFKA_CFG_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_CFG_MIN_INSYNC_REPLICAS
+              value: "2"
+            - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_CFG_LOG_RETENTION_HOURS
+              value: "168"
+
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - kafka-topics.sh --bootstrap-server localhost:9092 --list
+            initialDelaySeconds: 60
+            periodSeconds:       30
+            timeoutSeconds:      15
+            failureThreshold:    3
+
+          readinessProbe:
+            tcpSocket:
+              port: kafka-internal
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            timeoutSeconds:      5
+            failureThreshold:    5
+
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /bitnami/kafka
+
+      volumes: []
+
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+        labels:
+          app: kafka
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# ── Headless Service for StatefulSet DNS ──────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: forex-trading
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: kafka
+  ports:
+    - name: kafka-internal
+      port: 9092
+    - name: kafka-ctrl
+      port: 9093
+
+---
+# ── ClusterIP Service for application access ──────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-service
+  namespace: forex-trading
+  labels:
+    app: kafka
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name:       kafka
+      port:       9092
+      targetPort: kafka-internal
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kafka-sa
+  namespace: forex-trading

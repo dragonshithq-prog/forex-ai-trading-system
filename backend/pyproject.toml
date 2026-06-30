@@ -1,0 +1,179 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forex-trading-system"
+version = "0.1.0"
+description = "Institutional-grade autonomous AI Forex trading ecosystem"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [
+    { name = "Forex AI Trading Team" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    # Web Framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.0",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0.0",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "redis[hiredis]>=5.0.0",
+
+    # Message Bus
+    "aio-pika>=9.4.0",
+
+    # gRPC
+    "grpcio>=1.62.0",
+    "grpcio-tools>=1.62.0",
+
+    # AI/ML
+    "scikit-learn>=1.4.0",
+    "xgboost>=2.0.0",
+    "optuna>=3.6.0",
+    "shap>=0.45.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "ta>=0.11.0",
+
+    # Monitoring
+    "prometheus-client>=0.20.0",
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-sdk>=1.24.0",
+
+    # Utilities
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.27.0",
+    "websockets>=12.0",
+    "structlog>=24.1.0",
+    "croniter>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.5.0",
+    "hypothesis>=6.98.0",
+    "black>=24.2.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+    "httpx>=0.27.0",
+]
+ml = [
+    "torch>=2.3.0",
+    "optuna>=3.6.0",
+    "shap>=0.45.0",
+    "lime>=0.2.0",
+    "joblib>=1.3.0",
+]
+broker = [
+    "oandapyV20>=0.6.0",
+    "MetaTrader5>=5.0.45",
+]
+all = [
+    "forex-trading-system[dev,ml,broker]",
+]
+
+[project.urls]
+Repository = "https://github.com/your-org/forex-trading-system"
+Documentation = "https://your-org.github.io/forex-trading-system"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forex_trading"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+]
+ignore = ["E501"]
+
+[tool.ruff.isort]
+known-first-party = ["forex_trading"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "-q",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "security: Security tests",
+    "slow: Slow tests",
+    "e2e: End-to-end tests",
+    "load: Load / performance tests",
+]
+
+[tool.coverage.run]
+source = ["src/forex_trading"]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+]

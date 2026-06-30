@@ -1,0 +1,399 @@
+# =============================================================================
+# CI Pipeline — Forex AI Trading Platform
+# Runs on every push and PR
+# Jobs: test-backend | test-frontend | security-scan | docker-build
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "feature/**", "hotfix/**"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:       # Allow manual trigger
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # Cancel superseded runs on same branch
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION:   "20"
+  # Docker
+  REGISTRY:  ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+# ── Job: Backend Tests ────────────────────────────────────────────────────────
+jobs:
+  test-backend:
+    name: Backend Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB:       forex_trading_test
+          POSTGRES_USER:     forex_test
+          POSTGRES_PASSWORD: testpassword_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forex_test -d forex_trading_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0               # Full history for accurate code coverage diffs
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install uv (fast package manager)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            backend/.venv
+          key: uv-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-py${{ matrix.python-version }}-
+
+      - name: Install dependencies (uv)
+        working-directory: backend
+        run: |
+          uv pip install -e ".[dev]" --system
+
+      - name: Lint — ruff (style + errors)
+        working-directory: backend
+        run: ruff check src/ --output-format=github
+
+      - name: Lint — ruff format check
+        working-directory: backend
+        run: ruff format --check src/
+
+      - name: Type check — mypy
+        working-directory: backend
+        run: mypy src/ --strict
+
+      - name: Unit + integration tests (pytest)
+        working-directory: backend
+        env:
+          DATABASE_URL:  postgresql+asyncpg://forex_test:testpassword_ci@localhost:5432/forex_trading_test
+          REDIS_URL:     redis://localhost:6379/0
+          ENVIRONMENT:   testing
+          JWT_SECRET_KEY: test-jwt-secret-key-not-for-production
+          LOG_LEVEL:     WARNING
+        run: |
+          pytest tests/ \
+            -v \
+            --tb=short \
+            --strict-markers \
+            --cov=forex_trading \
+            --cov-branch \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -x
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file:  backend/coverage.xml
+          flags: backend,python${{ matrix.python-version }}
+          name:  backend-coverage
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results-py${{ matrix.python-version }}
+          path: |
+            backend/coverage.xml
+            backend/.pytest_cache/
+          retention-days: 7
+
+  # ── Job: Frontend Tests ───────────────────────────────────────────────────
+  test-frontend:
+    name: Frontend Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --frozen-lockfile
+
+      - name: Type check (TypeScript)
+        working-directory: frontend
+        run: npm run type-check
+
+      - name: Lint (ESLint)
+        working-directory: frontend
+        run: npm run lint -- --max-warnings=0
+
+      - name: Unit tests (Jest)
+        working-directory: frontend
+        run: |
+          npm run test -- \
+            --coverage \
+            --coverageDirectory coverage \
+            --coverageReporters lcov text \
+            --passWithNoTests
+
+      - name: Build (Next.js production)
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://api.yourdomain.com
+          NEXT_PUBLIC_WS_URL:  wss://api.yourdomain.com/ws
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file:  frontend/coverage/lcov.info
+          flags: frontend
+          name:  frontend-coverage
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ github.sha }}
+          path: frontend/.next/
+          retention-days: 3
+
+  # ── Job: Security Scan ────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write    # Required for SARIF upload
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Python SAST: bandit
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bandit + pip-audit
+        run: pip install bandit pip-audit
+
+      - name: Run bandit (Python SAST)
+        working-directory: backend
+        run: |
+          bandit -r src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --format sarif \
+            --output ../bandit-results.sarif \
+          || true   # Don't fail CI on bandit findings — use SARIF for review
+
+      - name: Upload bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+      # Dependency audit: pip-audit
+      - name: pip-audit (Python dependency CVEs)
+        working-directory: backend
+        run: pip-audit --require-hashes --strict || true
+
+      # Node dependency audit
+      - name: npm audit (frontend dependency CVEs)
+        working-directory: frontend
+        run: npm audit --audit-level=high || true
+
+      # Container scanning: trivy
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type:   fs
+          scan-ref:    .
+          format:      sarif
+          output:      trivy-results.sarif
+          severity:    CRITICAL,HIGH
+          exit-code:   "0"           # Report but don't block; block in CD
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      # Secret detection: gitleaks
+      - name: Run Gitleaks (secret detection)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ── Job: Docker Build + Push (main branch only) ───────────────────────────
+  docker-build:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test-backend, test-frontend, security-scan]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta-backend.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Backend Image ─────────────────────────────────────────────────────
+      - name: Extract metadata for backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context:    .
+          file:       docker/Dockerfile.backend
+          push:       true
+          tags:       ${{ steps.meta-backend.outputs.tags }}
+          labels:     ${{ steps.meta-backend.outputs.labels }}
+          platforms:  linux/amd64
+          cache-from: type=gha,scope=backend
+          cache-to:   type=gha,mode=max,scope=backend
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_SHA=${{ github.sha }}
+
+      # ── Frontend Image ────────────────────────────────────────────────────
+      - name: Extract metadata for frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context:    .
+          file:       docker/Dockerfile.frontend
+          push:       true
+          tags:       ${{ steps.meta-frontend.outputs.tags }}
+          labels:     ${{ steps.meta-frontend.outputs.labels }}
+          platforms:  linux/amd64
+          cache-from: type=gha,scope=frontend
+          cache-to:   type=gha,mode=max,scope=frontend
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_SHA=${{ github.sha }}
+            NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+            NEXT_PUBLIC_WS_URL=wss://api.yourdomain.com/ws
+
+      # ── Post-build Trivy scan on the built images ──────────────────────────
+      - name: Trivy scan — backend image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:sha-${{ github.sha }}
+          format:    table
+          exit-code: "1"             # Block on CRITICAL in built image
+          severity:  CRITICAL
+          ignore-unfixed: true
+
+      - name: Trivy scan — frontend image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:sha-${{ github.sha }}
+          format:    table
+          exit-code: "1"
+          severity:  CRITICAL
+          ignore-unfixed: true

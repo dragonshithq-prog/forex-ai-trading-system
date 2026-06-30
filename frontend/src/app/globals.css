@@ -1,0 +1,176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Design Token Layer — DTCG-aligned CSS custom properties
+   --------------------------------------------------------------------------- */
+
+@layer base {
+  :root {
+    /* Dark theme (default for trading terminal) */
+    --background: 0 0% 4%;        /* #0a0a0a */
+    --foreground: 0 0% 95%;       /* #f2f2f2 */
+    --card: 0 0% 7%;              /* #111 */
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 217 91% 60%;       /* #3b82f6 blue accent */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 50%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;     /* #ef4444 */
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 13%;           /* #222 */
+    --input: 0 0% 13%;
+    --ring: 217 91% 60%;
+    --radius: 0.5rem;
+
+    /* Trading-specific tokens */
+    --profit: 142 71% 45%;        /* #22c55e */
+    --loss: 0 84% 60%;            /* #ef4444 */
+    --buy: 217 91% 60%;           /* #3b82f6 */
+    --sell: 25 95% 53%;           /* #f97316 */
+    --warning: 38 92% 50%;        /* #f59e0b */
+    --surface: 0 0% 7%;
+    --surface-elevated: 0 0% 10%;
+  }
+
+  .light {
+    --background: 0 0% 97%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 93%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 93%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 88%;
+    --input: 0 0% 88%;
+    --ring: 217 91% 60%;
+    --surface: 0 0% 97%;
+    --surface-elevated: 0 0% 100%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Monospace for all trading numbers */
+  .font-trading {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    letter-spacing: -0.01em;
+  }
+
+  /* Scrollbar styling (dark theme) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted;
+  }
+
+  /* Focus visible ring — accessible */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Price animation classes */
+  .price-up {
+    animation: priceFlashUp 0.4s ease-out;
+  }
+
+  .price-down {
+    animation: priceFlashDown 0.4s ease-out;
+  }
+}
+
+@layer utilities {
+  .text-profit { color: hsl(var(--profit)); }
+  .text-loss { color: hsl(var(--loss)); }
+  .text-buy { color: hsl(var(--buy)); }
+  .text-sell { color: hsl(var(--sell)); }
+  .bg-profit { background-color: hsl(var(--profit)); }
+  .bg-loss { background-color: hsl(var(--loss)); }
+  .bg-profit\/10 { background-color: hsl(var(--profit) / 0.1); }
+  .bg-loss\/10 { background-color: hsl(var(--loss) / 0.1); }
+  .bg-buy\/15 { background-color: hsl(var(--buy) / 0.15); }
+  .bg-sell\/15 { background-color: hsl(var(--sell) / 0.15); }
+
+  /* Glassmorphism surface */
+  .glass {
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* Grid background pattern */
+  .bg-grid {
+    background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Trading number formatting */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Hide scrollbar but keep scrollable */
+  .scrollbar-hidden {
+    scrollbar-width: none;
+  }
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

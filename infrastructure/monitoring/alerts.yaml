@@ -1,0 +1,270 @@
+# =============================================================================
+# Prometheus Alert Rules — Forex AI Trading Platform
+# =============================================================================
+
+groups:
+
+  # ── API / Backend Alerts ───────────────────────────────────────────────────
+  - name: forex-api-alerts
+    interval: 30s
+    rules:
+
+      # API Error Rate > 1% for 5 minutes
+      - alert: HighAPIErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="forex-backend", status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="forex-backend"}[5m]))
+          ) * 100 > 1
+        for: 5m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "High API error rate on Forex Trading backend"
+          description: "API error rate is {{ printf \"%.2f\" $value }}% (threshold: 1%) — investigate immediately."
+          runbook_url: "https://wiki.yourdomain.com/runbooks/api-errors"
+          dashboard:   "https://monitoring.yourdomain.com/d/trading-overview"
+
+      # API High Latency (P95 > 500ms)
+      - alert: HighAPILatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket{job="forex-backend"}[5m])) by (le, endpoint)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "High API latency (P95 > 500ms)"
+          description: "P95 latency for {{ $labels.endpoint }} is {{ printf \"%.0f\" ($value * 1000) }}ms."
+
+      # API High Latency — Critical (P99 > 2s)
+      - alert: CriticalAPILatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{job="forex-backend"}[5m])) by (le)
+          ) > 2.0
+        for: 3m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "Critical API latency (P99 > 2000ms)"
+          description: "P99 latency is {{ printf \"%.0f\" ($value * 1000) }}ms — SLA breach imminent."
+
+      # Circuit Breaker Activated
+      - alert: CircuitBreakerActivated
+        expr: |
+          sum(forex_circuit_breaker_state{state="open"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "Circuit breaker is OPEN"
+          description: "Circuit breaker for {{ $labels.service }} has tripped. Downstream service may be unavailable."
+          runbook_url: "https://wiki.yourdomain.com/runbooks/circuit-breaker"
+
+      # Backend pods down
+      - alert: BackendPodsDown
+        expr: |
+          sum(up{job="forex-backend"}) < 1
+        for: 2m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "All backend pods are DOWN"
+          description: "No backend pods are responding. Service is completely unavailable."
+
+  # ── Database Alerts ────────────────────────────────────────────────────────
+  - name: forex-database-alerts
+    interval: 30s
+    rules:
+
+      # Database Connection Pool Exhausted
+      - alert: DBConnectionPoolExhausted
+        expr: |
+          (
+            pg_stat_database_numbackends{datname="forex_trading"}
+            /
+            pg_settings_max_connections
+          ) * 100 > 90
+        for: 3m
+        labels:
+          severity: critical
+          team:     database
+        annotations:
+          summary:     "PostgreSQL connection pool near exhaustion"
+          description: "{{ printf \"%.0f\" $value }}% of max connections used (threshold: 90%). Risk of connection refusal."
+          runbook_url: "https://wiki.yourdomain.com/runbooks/db-connections"
+
+      # Database Replication Lag > 30s
+      - alert: DBReplicationLag
+        expr: |
+          pg_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+          team:     database
+        annotations:
+          summary:     "High PostgreSQL replication lag"
+          description: "Replication lag is {{ printf \"%.0f\" $value }}s (threshold: 30s)."
+
+      # Database disk space > 80%
+      - alert: DBDiskSpaceHigh
+        expr: |
+          (
+            pg_database_size_bytes{datname="forex_trading"}
+            /
+            (pg_settings_work_mem * 1000)
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team:     database
+        annotations:
+          summary:     "PostgreSQL database approaching storage limit"
+          description: "Database size is above 80% of allocated storage."
+
+  # ── Cache Alerts ───────────────────────────────────────────────────────────
+  - name: forex-cache-alerts
+    interval: 30s
+    rules:
+
+      # Redis Down
+      - alert: RedisDown
+        expr: |
+          redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          team:     backend
+        annotations:
+          summary:     "Redis is DOWN"
+          description: "Redis instance is unreachable. All caching and session data unavailable."
+
+      # Redis Memory > 90%
+      - alert: RedisMemoryHigh
+        expr: |
+          (redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "Redis memory usage critical (>90%)"
+          description: "Redis is using {{ printf \"%.0f\" $value }}% of max memory. Key eviction may start."
+
+  # ── Infrastructure / System Alerts ────────────────────────────────────────
+  - name: forex-infra-alerts
+    interval: 30s
+    rules:
+
+      # Container Memory > 90%
+      - alert: ContainerMemoryHigh
+        expr: |
+          (
+            container_memory_working_set_bytes{name!=""}
+            /
+            container_spec_memory_limit_bytes{name!=""}
+          ) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team:     platform
+        annotations:
+          summary:     "Container memory usage critical"
+          description: "Container {{ $labels.name }} is using {{ printf \"%.0f\" $value }}% of its memory limit."
+
+      # Host Memory > 90%
+      - alert: HostMemoryHigh
+        expr: |
+          (
+            1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+          ) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          team:     platform
+        annotations:
+          summary:     "Host memory usage is CRITICAL (>90%)"
+          description: "Host {{ $labels.instance }} is using {{ printf \"%.0f\" $value }}% of memory."
+
+      # Host CPU > 85%
+      - alert: HostCPUHigh
+        expr: |
+          (
+            1 - avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))
+          ) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team:     platform
+        annotations:
+          summary:     "High CPU utilization on host"
+          description: "Host {{ $labels.instance }} CPU usage is {{ printf \"%.0f\" $value }}% (threshold: 85%)."
+
+      # Disk Usage > 80%
+      - alert: DiskSpaceHigh
+        expr: |
+          (
+            1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+          ) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team:     platform
+        annotations:
+          summary:     "Disk space high (>80%)"
+          description: "{{ $labels.mountpoint }} on {{ $labels.instance }} is {{ printf \"%.0f\" $value }}% full."
+
+  # ── Trading-specific Alerts ────────────────────────────────────────────────
+  - name: forex-trading-alerts
+    interval: 15s
+    rules:
+
+      # No AI signals generated for > 15 minutes (during market hours)
+      - alert: AISignalGenerationStopped
+        expr: |
+          rate(forex_ai_signals_generated_total[15m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          team:     trading
+        annotations:
+          summary:     "AI signal generation has stopped"
+          description: "No trading signals generated in 15 minutes. Check ML model service."
+
+      # Trade execution failures > 5%
+      - alert: TradeExecutionFailureHigh
+        expr: |
+          (
+            rate(forex_trade_executions_failed_total[5m])
+            /
+            rate(forex_trade_executions_total[5m])
+          ) * 100 > 5
+        for: 3m
+        labels:
+          severity: critical
+          team:     trading
+        annotations:
+          summary:     "High trade execution failure rate (>5%)"
+          description: "{{ printf \"%.1f\" $value }}% of trade executions are failing. Broker connectivity issue possible."
+
+      # Kafka consumer lag too high (> 10,000 messages)
+      - alert: KafkaConsumerLagHigh
+        expr: |
+          kafka_consumer_group_lag_sum{group="forex-trading-consumer"} > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team:     backend
+        annotations:
+          summary:     "Kafka consumer lag too high"
+          description: "Consumer group {{ $labels.group }} has a lag of {{ $value }} messages."

@@ -1,0 +1,190 @@
+# =============================================================================
+# Prometheus Configuration — Forex AI Trading Platform
+# Full production scrape configuration with alerting
+# =============================================================================
+
+global:
+  scrape_interval:     15s           # How frequently to scrape targets
+  evaluation_interval: 15s           # How frequently to evaluate rules
+  scrape_timeout:      10s
+
+  # External labels (attached to all time series sent to remote storage)
+  external_labels:
+    environment: production
+    platform:    forex-trading
+    region:      us-east-1
+
+# ── Alert Manager ─────────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+      timeout: 5s
+
+# ── Rule Files ────────────────────────────────────────────────────────────────
+rule_files:
+  - "/etc/prometheus/alerts.yaml"
+
+# ── Scrape Configurations ─────────────────────────────────────────────────────
+scrape_configs:
+
+  # ── Self-monitoring ─────────────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  - job_name: forex-backend
+    scrape_interval: 15s
+    scrape_timeout:  10s
+    metrics_path:    /metrics
+    scheme:          http
+    static_configs:
+      - targets:
+          - 'backend:8000'
+        labels:
+          service: backend
+          tier:    api
+    # Drop high-cardinality internal metrics
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'python_gc_objects_collected_total|python_gc_objects_generation.*'
+        action: drop
+
+  # ── Frontend (Next.js) — optional if instrumented ──────────────────────────
+  - job_name: forex-frontend
+    scrape_interval: 30s
+    metrics_path:    /api/metrics
+    static_configs:
+      - targets:
+          - 'frontend:3000'
+        labels:
+          service: frontend
+          tier:    web
+
+  # ── Redis Exporter ───────────────────────────────────────────────────────────
+  - job_name: redis
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 'redis-exporter:9121'
+        labels:
+          service: redis
+          tier:    cache
+
+  # ── PostgreSQL Exporter ──────────────────────────────────────────────────────
+  - job_name: postgres
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - 'postgres-exporter:9187'
+        labels:
+          service: postgres
+          tier:    database
+
+  # ── Kafka Exporter (JMX) ─────────────────────────────────────────────────────
+  - job_name: kafka
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - 'kafka-exporter:9308'
+        labels:
+          service: kafka
+          tier:    streaming
+
+  # ── cAdvisor (Container metrics) ─────────────────────────────────────────────
+  - job_name: cadvisor
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 'cadvisor:8080'
+        labels:
+          service: cadvisor
+    metric_relabel_configs:
+      # Only keep container metrics (drop host metrics)
+      - source_labels: [container_label_com_docker_compose_service]
+        regex: ''
+        action: drop
+      # Drop high-cardinality per-CPU metrics
+      - source_labels: [__name__]
+        regex: 'container_cpu_usage_seconds_total'
+        target_label: __name__
+        replacement: 'container_cpu_usage_seconds_total'
+
+  # ── Node Exporter (host metrics) ─────────────────────────────────────────────
+  - job_name: node-exporter
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - 'node-exporter:9100'
+        labels:
+          service: node-exporter
+    metric_relabel_configs:
+      # Keep only critical system metrics
+      - source_labels: [__name__]
+        regex: 'node_(cpu|memory|disk|network|load|filesystem).*'
+        action: keep
+
+  # ── Nginx Exporter ───────────────────────────────────────────────────────────
+  - job_name: nginx
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 'nginx-exporter:9113'
+        labels:
+          service: nginx
+          tier:    proxy
+
+  # ── Grafana self-monitoring ───────────────────────────────────────────────────
+  - job_name: grafana
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - 'grafana:3000'
+        labels:
+          service: grafana
+
+  # ── Kubernetes API Server (when running in cluster) ───────────────────────────
+  - job_name: kubernetes-apiservers
+    kubernetes_sd_configs:
+      - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  # ── Kubernetes Pods (annotated scraping) ──────────────────────────────────────
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [forex-trading]
+    relabel_configs:
+      # Only scrape pods with prometheus.io/scrape: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
