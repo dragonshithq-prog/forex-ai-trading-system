@@ -1,6 +1,6 @@
 'use client';
 import { useTheme } from 'next-themes';
-import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff } from 'lucide-react';
+import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff, Search } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@radix-ui/react-dropdown-menu';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils/cn';
 import { useAuthStore } from '@/lib/store/authStore';
 import { useRiskStore } from '@/lib/store/riskStore';
@@ -100,6 +101,17 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
           </span>
         </div>
 
+        {/* Command palette trigger */}
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('open-command-palette'))}
+          className="hidden md:flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted hover:bg-muted/80 text-xs text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label="Open command palette"
+        >
+          <Search className="w-3 h-3" aria-hidden />
+          <span>Search</span>
+          <kbd className="font-mono bg-background/50 px-1.5 py-0.5 rounded text-[10px] border border-border">⌘K</kbd>
+        </button>
+
         {/* Theme toggle */}
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -115,6 +127,18 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
 
         {/* Notifications */}
         <button
+          onClick={() => {
+            toast.dismiss();
+            const alerts = useRiskStore.getState().alerts;
+            if (alerts.length === 0) {
+              toast.info('No new notifications', { duration: 2000 });
+            } else {
+              toast.message(`${alerts.length} unread alert(s)`, {
+                description: alerts[alerts.length - 1]?.message,
+                duration: 3000,
+              });
+            }
+          }}
           className="relative w-8 h-8 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Notifications ${unacknowledgedAlerts > 0 ? `(${unacknowledgedAlerts} unread)` : ''}`}
         >

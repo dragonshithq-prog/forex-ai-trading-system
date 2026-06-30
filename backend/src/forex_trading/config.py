@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8080"]
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://forex:forex@localhost:5432/forex_trading"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./forex_trading.db"
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # JWT Authentication
     JWT_SECRET_KEY: str = "jwt-secret-change-in-production"
-    JWT_ALGORITHM: str = "RS256"
+    JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 

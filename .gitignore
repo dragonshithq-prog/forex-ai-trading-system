@@ -34,6 +34,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Error / runtime logs
+*.err
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -188,3 +191,10 @@ data/ticks/
 data/historical/
 *.csv
 !data/samples/*.csv
+
+# SQLite databases
+*.db
+*.sqlite
+
+# TypeScript build info
+*.tsbuildinfo

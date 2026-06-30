@@ -2,10 +2,9 @@
 
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
+from uuid import UUID as PyUUID, uuid4
 
-from sqlalchemy import DateTime, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, JSON, String, Uuid, func
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -18,7 +17,9 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
     type_annotation_map = {
-        uuid4: UUID(as_uuid=True),
+        uuid4: Uuid,
+        PyUUID: Uuid,
+        dict: JSON,
     }
 
 
@@ -42,7 +43,6 @@ class UUIDPrimaryKeyMixin:
     """Mixin for UUID primary key."""
 
     id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
         nullable=False,

@@ -19,6 +19,7 @@ from forex_trading.api.schemas.market import (
     TickLegacyResponse,
     TickResponse,
 )
+from forex_trading.market_data.services.demo_data import generate_demo_candles, generate_demo_tick
 from forex_trading.market_data.services.session_detector import (
     SESSION_TIMES,
     SessionDetector,
@@ -66,7 +67,8 @@ async def get_candles(
             detail=f"Unsupported timeframe '{timeframe}'. Must be one of: {sorted(_SUPPORTED_TIMEFRAMES)}",
         )
     # In production: query TimescaleDB / cache
-    return []
+    candles = generate_demo_candles(symbol, timeframe, count)
+    return [CandleResponse(**c) for c in candles]
 
 
 @router.get("/tick/{symbol}", response_model=TickResponse)
@@ -75,14 +77,8 @@ async def get_tick(
     current_user: User = Depends(get_current_user),
 ) -> TickResponse:
     # In production: get from Redis latest-tick cache
-    now = datetime.now(timezone.utc)
-    return TickResponse(
-        symbol=symbol.upper(),
-        bid=0.0,
-        ask=0.0,
-        spread=0.0,
-        timestamp=now,
-    )
+    tick = generate_demo_tick(symbol)
+    return TickResponse(**tick)
 
 
 @router.get("/session", response_model=SessionResponse)
@@ -227,7 +223,8 @@ async def get_symbol_candles(
     limit: int = Query(100, ge=1, le=1000),
     current_user: User = Depends(get_current_user),
 ) -> list[CandleResponse]:
-    return []
+    candles = generate_demo_candles(symbol, timeframe, limit)
+    return [CandleResponse(**c) for c in candles]
 
 
 @router.get("/symbols/{symbol}/ticks", response_model=list[TickLegacyResponse])
@@ -264,10 +261,5 @@ async def get_current_price(
     symbol: str,
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    return {
-        "symbol": symbol.upper(),
-        "bid": 0.0,
-        "ask": 0.0,
-        "spread": 0.0,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    tick = generate_demo_tick(symbol)
+    return tick

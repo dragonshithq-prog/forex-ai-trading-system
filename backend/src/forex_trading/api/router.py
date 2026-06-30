@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from forex_trading.api.routers import auth, users, broker, trading, strategy, risk, market, accounts
+from forex_trading.api.routers import auth, users, broker, trading, strategy, risk, market, accounts, analytics
 
 api_router = APIRouter()
 
@@ -13,6 +13,7 @@ api_router.include_router(risk.router, tags=["Risk Management"])
 api_router.include_router(strategy.router, tags=["Strategy"])
 api_router.include_router(broker.router, tags=["Broker"])
 api_router.include_router(accounts.router, tags=["Accounts"])
+api_router.include_router(analytics.router, tags=["Analytics"])
 api_router.include_router(users.router, tags=["Users"])
 
 

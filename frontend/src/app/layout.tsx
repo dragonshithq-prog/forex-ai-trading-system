@@ -3,6 +3,8 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/layout/ThemeProvider';
 import { Toaster } from 'sonner';
+import { CommandPalette } from '@/components/common/CommandPalette';
+import { AuthInit } from '@/components/common/AuthInit';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -16,7 +18,7 @@ export const metadata: Metadata = {
     template: '%s | Forex AI',
   },
   description: 'Institutional-grade AI Forex trading dashboard',
-  robots: 'noindex, nofollow', // Trading terminal should not be indexed
+  robots: 'noindex, nofollow',
 };
 
 export const viewport: Viewport = {
@@ -39,9 +41,12 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
+          <AuthInit />
           {children}
+          <CommandPalette />
           <Toaster
             position="top-right"
+            offset={80}
             toastOptions={{
               style: {
                 background: 'hsl(0 0% 9%)',

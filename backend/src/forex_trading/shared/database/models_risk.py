@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forex_trading.shared.database.base import BaseModel
@@ -33,7 +31,7 @@ class RiskConfiguration(BaseModel):
     __tablename__ = "risk_configurations"
 
     broker_account_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
@@ -67,7 +65,7 @@ class RiskState(BaseModel):
     __tablename__ = "risk_states"
 
     broker_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
@@ -112,7 +110,7 @@ class RiskAlert(BaseModel):
     )
 
     broker_account_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=True,
     )
@@ -135,21 +133,21 @@ class RiskOverride(BaseModel):
     __tablename__ = "risk_overrides"
 
     broker_account_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=True,
     )
     order_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("orders.id", ondelete="SET NULL"),
         nullable=True,
     )
     position_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("positions.id", ondelete="SET NULL"),
         nullable=True,
     )
 
     action: Mapped[OverrideAction] = mapped_column(Enum(OverrideAction), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
-    risk_state_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    risk_state_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

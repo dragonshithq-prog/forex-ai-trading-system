@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from forex_trading.shared.database.base import BaseModel, SoftDeleteMixin
@@ -40,9 +38,9 @@ class Strategy(BaseModel, SoftDeleteMixin):
         Enum(StrategyStatus), default=StrategyStatus.ACTIVE, nullable=False
     )
 
-    parameters: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    timeframes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    parameters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    symbols: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    timeframes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     max_position_size_pct: Mapped[float] = mapped_column(Float, default=2.0, nullable=False)
     risk_per_trade_pct: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
@@ -88,7 +86,7 @@ class AIDecision(BaseModel):
     )
 
     strategy_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("strategies.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -109,7 +107,7 @@ class AIDecision(BaseModel):
     session: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     price_at_decision: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    agent_signals: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    agent_signals: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     was_executed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID
 
+import bcrypt as _bcrypt
 from cryptography.fernet import Fernet
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 import structlog
 
@@ -17,8 +17,6 @@ from forex_trading.config import get_settings
 
 logger = structlog.get_logger()
 settings = get_settings()
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _get_fernet_key() -> bytes:
@@ -72,12 +70,12 @@ class SecurityManager:
         self.refresh_expire_days = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
 
     def hash_password(self, password: str) -> str:
-        """Hash a password."""
-        return pwd_context.hash(password)
+        """Hash a password using bcrypt."""
+        return _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Verify a password against its hash."""
-        return pwd_context.verify(plain_password, hashed_password)
+        """Verify a password against its bcrypt hash."""
+        return _bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
     def create_access_token(
         self,

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 import structlog
 
 from forex_trading.config import get_settings
+from forex_trading.shared.database.models import Base
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -39,6 +40,9 @@ class DatabaseManager:
             pool_size=settings.DATABASE_POOL_SIZE,
             max_overflow=settings.DATABASE_MAX_OVERFLOW,
         )
+        # Create all tables on startup
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             class_=AsyncSession,

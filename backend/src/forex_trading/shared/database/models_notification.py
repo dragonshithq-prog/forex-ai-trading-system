@@ -4,8 +4,7 @@ import enum
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from forex_trading.shared.database.base import BaseModel
@@ -33,7 +32,7 @@ class Notification(BaseModel):
     __tablename__ = "notifications"
 
     user_id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -68,8 +67,8 @@ class Notification(BaseModel):
         Text,
         nullable=True,
     )
-    metadata: Mapped[dict | None] = mapped_column(
-        JSONB,
+    notif_metadata: Mapped[dict | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
@@ -80,7 +79,7 @@ class NotificationPreference(BaseModel):
     __tablename__ = "notification_preferences"
 
     user_id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,

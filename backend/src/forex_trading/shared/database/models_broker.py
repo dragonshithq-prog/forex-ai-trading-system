@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from forex_trading.shared.database.base import BaseModel, SoftDeleteMixin
@@ -37,7 +35,7 @@ class BrokerAccount(BaseModel, SoftDeleteMixin):
     __tablename__ = "broker_accounts"
 
     user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -92,7 +90,7 @@ class BrokerAccount(BaseModel, SoftDeleteMixin):
     unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     extra_data: Mapped[Optional[dict]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
 
@@ -109,7 +107,7 @@ class BrokerConnection(BaseModel):
     __tablename__ = "broker_connections"
 
     account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -136,7 +134,7 @@ class BrokerConnection(BaseModel):
         nullable=True,
     )
     connection_info: Mapped[Optional[dict]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
 

@@ -21,7 +21,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 const DEMO_CREDENTIALS = {
   username: 'demo',
-  password: 'demo123',
+  password: 'demo',
 };
 
 export function LoginPageClient() {

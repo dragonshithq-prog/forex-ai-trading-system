@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from forex_trading.shared.database.base import BaseModel, SoftDeleteMixin
@@ -75,7 +73,7 @@ class User(BaseModel, SoftDeleteMixin):
         nullable=True,
     )
     preferences: Mapped[Optional[dict]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
         default=dict,
     )
@@ -92,7 +90,7 @@ class UserSession(BaseModel):
     __tablename__ = "user_sessions"
 
     user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -130,7 +128,7 @@ class AuditLog(BaseModel):
     __tablename__ = "audit_logs"
 
     user_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -149,7 +147,7 @@ class AuditLog(BaseModel):
         nullable=True,
     )
     details: Mapped[Optional[dict]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
     ip_address: Mapped[Optional[str]] = mapped_column(

@@ -5,9 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from forex_trading.shared.database.base import BaseModel
@@ -64,18 +62,18 @@ class Order(BaseModel):
     )
 
     broker_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     signal_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("ai_decisions.id", ondelete="SET NULL"),
         nullable=True,
     )
     strategy_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("strategies.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -103,12 +101,13 @@ class Order(BaseModel):
     broker_order_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     broker_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     filled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    strategy = relationship("Strategy", back_populates="orders")
     broker_account = relationship("BrokerAccount", back_populates="orders")
     deal = relationship("Deal", back_populates="order", uselist=False, lazy="selectin")
 
@@ -123,13 +122,13 @@ class Position(BaseModel):
     )
 
     broker_account_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("broker_accounts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     strategy_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("strategies.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -158,8 +157,9 @@ class Position(BaseModel):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
+    strategy = relationship("Strategy", back_populates="positions")
     broker_account = relationship("BrokerAccount", back_populates="positions")
     deals = relationship("Deal", back_populates="position", lazy="selectin")
 
@@ -170,13 +170,13 @@ class Deal(BaseModel):
     __tablename__ = "deals"
 
     order_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("orders.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     position_id: Mapped[Optional[UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
+        Uuid,
         ForeignKey("positions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,

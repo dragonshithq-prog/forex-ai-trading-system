@@ -3,8 +3,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Float, Index, Integer, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forex_trading.shared.database.base import Base
@@ -23,7 +22,7 @@ class Tick(Base):
     )
 
     id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid4,
     )
@@ -67,7 +66,7 @@ class Candle(Base):
     )
 
     id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid4,
     )
@@ -124,7 +123,7 @@ class MarketStructure(Base):
     )
 
     id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid4,
     )
@@ -173,7 +172,7 @@ class SymbolInfo(Base):
     __tablename__ = "symbol_info"
 
     id: Mapped[uuid4] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         primary_key=True,
         default=uuid4,
     )
