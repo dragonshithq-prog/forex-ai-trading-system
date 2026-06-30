@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -165,6 +166,11 @@ export function LoginPageClient() {
                   {errors.password.message}
                 </p>
               )}
+              <div className="flex justify-end mt-1">
+                <Link href="/reset-password/request" className="text-xs text-muted-foreground hover:text-primary transition-colors">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             {/* MFA (shown conditionally) */}
@@ -230,6 +236,13 @@ export function LoginPageClient() {
 
           <p className="text-center text-xs text-muted-foreground mt-4">
             Demo uses mock data — no real trades are executed
+          </p>
+
+          <p className="text-center text-sm text-muted-foreground mt-4">
+            Don&apos;t have an account?{' '}
+            <Link href="/register" className="text-primary hover:underline font-medium">
+              Create one
+            </Link>
           </p>
         </div>
 

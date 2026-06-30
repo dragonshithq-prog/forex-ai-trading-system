@@ -11,6 +11,36 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from forex_trading.shared.database.base import BaseModel, SoftDeleteMixin
 
 
+class PasswordResetToken(BaseModel):
+    """Password reset token model."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    is_used: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    user = relationship("User", backref="reset_tokens")
+
+
 class UserRole(str, enum.Enum):
     """User roles for RBAC."""
     VIEWER = "viewer"
@@ -69,6 +99,14 @@ class User(BaseModel, SoftDeleteMixin):
         nullable=True,
     )
     last_login: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    failed_login_attempts: Mapped[int] = mapped_column(
+        default=0,
+        nullable=False,
+    )
+    locked_until: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

@@ -1,6 +1,7 @@
 'use client';
 import { useTheme } from 'next-themes';
-import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff, Search } from 'lucide-react';
+import Link from 'next/link';
+import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff, Search, Settings, ShieldCheck } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -176,6 +177,20 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
               <p className="text-xs text-muted-foreground truncate">{user?.email ?? 'demo@forexbot.ai'}</p>
             </div>
             <DropdownMenuSeparator className="border-border mx-1 my-1" />
+            {user?.role && ['admin', 'superadmin'].includes(user.role) && (
+              <DropdownMenuItem asChild>
+                <Link href="/admin" className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/50 rounded-md cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <ShieldCheck className="w-4 h-4" aria-hidden />
+                  Admin Panel
+                </Link>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem asChild>
+              <Link href="/settings" className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/50 rounded-md cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <Settings className="w-4 h-4" aria-hidden />
+                Settings
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={handleLogout}
               className="flex items-center gap-2 px-3 py-2 text-sm text-loss hover:bg-loss/10 rounded-md cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

@@ -19,10 +19,29 @@ export interface User {
   email: string;
   username: string;
   full_name?: string;
-  role: 'admin' | 'trader' | 'viewer';
+  role: 'admin' | 'trader' | 'viewer' | 'superadmin';
   is_active: boolean;
+  is_verified?: boolean;
   mfa_enabled: boolean;
+  last_login?: string;
+  failed_login_attempts?: number;
   created_at: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  password: string;
+  full_name?: string;
+}
+
+export interface UserListResponse {
+  users: User[];
+  total: number;
+}
+
+export interface AdminResetPasswordRequest {
+  new_password: string;
 }
 
 export interface PaginatedResponse<T> {

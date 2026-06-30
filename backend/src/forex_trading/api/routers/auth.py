@@ -14,13 +14,19 @@ from forex_trading.api.schemas.auth import (
     MFASetupResponse,
     MFAVerifyRequest,
     PasswordChangeRequest,
+    PasswordResetRequest,
+    PasswordResetConfirm,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
 )
 from forex_trading.api.schemas.user import UserResponse
 from forex_trading.core.security import security_manager
-from forex_trading.shared.database.crud_user import user_repository, user_session_repository
+from forex_trading.shared.database.crud_user import (
+    user_repository,
+    user_session_repository,
+    password_reset_repository,
+)
 from forex_trading.shared.database.models_user import User
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -33,11 +39,11 @@ def _generate_backup_codes() -> list[str]:
     return [secrets.token_hex(_BACKUP_CODE_LENGTH // 2) for _ in range(_BACKUP_CODE_COUNT)]
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
+) -> LoginResponse:
     existing_email = await user_repository.get_by_email(db, email=request.email)
     if existing_email:
         raise HTTPException(
@@ -71,19 +77,20 @@ async def register(
         role=user.role.value,
     )
 
-    return TokenResponse(
+    return LoginResponse(
         access_token=token_pair.access_token,
         refresh_token=token_pair.refresh_token,
         expires_in=token_pair.expires_in,
+        user=UserResponse.model_validate(user),
     )
 
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
     request: LoginRequest,
+    request_obj: Request,
     db: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
-    # Support login by username or email (username field may contain email)
     user: User | None = None
     if "@" in request.username:
         user = await user_repository.get_by_email(db, email=request.username)
@@ -91,10 +98,18 @@ async def login(
         user = await user_repository.get_by_username(db, username=request.username)
 
     if user is None or not security_manager.verify_password(request.password, user.hashed_password):
+        if user:
+            await user_repository.record_failed_login(db, user_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if await user_repository.is_account_locked(user):
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account locked due to too many failed attempts. Try again later.",
         )
 
     if not user.is_active:
@@ -106,7 +121,7 @@ async def login(
     if user.mfa_enabled:
         if not request.mfa_token:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_449_RETRY_WITH,
                 detail="MFA token required",
             )
         if not user.mfa_secret:
@@ -269,10 +284,58 @@ async def change_password(
         obj_in={"hashed_password": new_hash},
     )
 
-    # Revoke all sessions to force re-login
     await user_session_repository.revoke_all_user_sessions(db, user_id=current_user.id)
 
     return {"message": "Password changed successfully"}
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    user = await user_repository.get_by_email(db, email=request.email)
+    if not user:
+        return {"message": "If an account with that email exists, a reset link has been sent"}
+
+    reset_token = await password_reset_repository.create_token(db, user_id=user.id)
+
+    return {
+        "message": "If an account with that email exists, a reset link has been sent",
+        "reset_token": reset_token.token,
+    }
+
+
+@router.post("/password-reset/reset", status_code=status.HTTP_200_OK)
+async def reset_password(
+    request: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    reset_token = await password_reset_repository.get_by_token(db, token=request.token)
+    if not reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    new_hash = security_manager.hash_password(request.new_password)
+    user = await user_repository.get(db, reset_token.user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    user.hashed_password = new_hash
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.add(user)
+    await db.commit()
+
+    await password_reset_repository.mark_used(db, token_id=reset_token.id)
+    await user_session_repository.revoke_all_user_sessions(db, user_id=user.id)
+
+    return {"message": "Password reset successfully"}
 
 
 @router.get("/me", response_model=UserResponse)

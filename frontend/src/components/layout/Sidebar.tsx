@@ -10,6 +10,7 @@ import {
   BarChart3,
   FlaskConical,
   Shield,
+  ShieldCheck,
   PlugZap,
   Settings,
   BookOpen,
@@ -74,6 +75,12 @@ const NAV_ITEMS = [
     label: 'Settings',
     icon: Settings,
     description: 'Configuration',
+  },
+  {
+    href: '/admin',
+    label: 'Admin',
+    icon: ShieldCheck,
+    description: 'User management',
   },
 ] as const;
 
