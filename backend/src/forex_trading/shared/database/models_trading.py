@@ -197,3 +197,74 @@ class Deal(BaseModel):
 
     order = relationship("Order", back_populates="deal")
     position = relationship("Position", back_populates="deals")
+
+
+class EventOutbox(BaseModel):
+    """Transactional outbox for reliable event publication.
+
+    Every domain event that must be published to Kafka is first written to this
+    table in the same DB transaction as the aggregate write. A background worker
+    polls this table and publishes to Kafka, deleting rows only after Kafka acks.
+    """
+
+    __tablename__ = "event_outbox"
+    __table_args__ = (
+        Index("idx_outbox_status_created", "status", "created_at"),
+        Index("idx_outbox_event_type", "event_type"),
+    )
+
+    class OutboxStatus(str, enum.Enum):
+        PENDING = "pending"
+        PUBLISHING = "publishing"
+        PUBLISHED = "published"
+        FAILED = "failed"
+        DEAD_LETTER = "dead_letter"
+
+    aggregate_id: Mapped[Optional[UUID]] = mapped_column(
+        Uuid, nullable=True, index=True,
+    )
+    aggregate_type: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(200), nullable=False,
+    )
+    event_version: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False,
+    )
+    payload: Mapped[dict] = mapped_column(
+        JSON, nullable=False,
+    )
+    status: Mapped[OutboxStatus] = mapped_column(
+        Enum(OutboxStatus), default=OutboxStatus.PENDING, nullable=False, index=True,
+    )
+    publish_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False,
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+    )
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    trace_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+    )
+
+
+class EventOutboxDeadLetter(BaseModel):
+    """Dead-letter queue for events that failed permanently."""
+
+    __tablename__ = "event_outbox_dead_letter"
+
+    original_outbox_id: Mapped[UUID] = mapped_column(
+        Uuid, nullable=False,
+    )
+    aggregate_id: Mapped[Optional[UUID]] = mapped_column(Uuid, nullable=True)
+    aggregate_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    failed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )

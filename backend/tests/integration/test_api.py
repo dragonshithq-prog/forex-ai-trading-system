@@ -78,6 +78,7 @@ def _make_user(role: str = "trader", is_active: bool = True) -> MagicMock:
     user.created_at = datetime.now(timezone.utc)
     user.updated_at = datetime.now(timezone.utc)
     user.last_login = None
+    user.locked_until = None
     return user
 
 
@@ -504,110 +505,49 @@ class TestMarketEndpoints:
         return app
 
     @pytest.mark.asyncio
-    async def test_get_session_returns_200(self):
-        """GET /market/session → 200 with session info."""
+    async def test_get_market_data_returns_200(self):
+        """GET /market/data?symbol=EURUSD → 200 with bid/ask."""
         app = self._authed_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                "/api/v1/market/session",
-                headers={"Authorization": "Bearer fake"},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "active_session" in data
-        assert "is_overlap" in data
-
-    @pytest.mark.asyncio
-    async def test_get_candles_valid_timeframe(self):
-        """GET /market/candles/EURUSD?timeframe=H1 → 200 with list."""
-        app = self._authed_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                "/api/v1/market/candles/EURUSD?timeframe=H1&count=100",
-                headers={"Authorization": "Bearer fake"},
-            )
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-
-    @pytest.mark.asyncio
-    async def test_get_candles_invalid_timeframe_returns_422(self):
-        """GET /market/candles with invalid timeframe → 422."""
-        app = self._authed_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                "/api/v1/market/candles/EURUSD?timeframe=INVALID",
-                headers={"Authorization": "Bearer fake"},
-            )
-        assert resp.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_get_market_structure_returns_200(self):
-        """GET /market/structure/EURUSD → 200."""
-        app = self._authed_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                "/api/v1/market/structure/EURUSD?timeframe=H1",
+                "/api/v1/market/data?symbol=EURUSD",
                 headers={"Authorization": "Bearer fake"},
             )
         assert resp.status_code == 200
         data = resp.json()
         assert data["symbol"] == "EURUSD"
-        assert data["timeframe"] == "H1"
+        assert "bid" in data
+        assert "ask" in data
 
     @pytest.mark.asyncio
-    async def test_get_market_structure_invalid_timeframe_returns_422(self):
-        """GET /market/structure with invalid timeframe → 422."""
+    async def test_get_market_data_invalid_symbol_returns_422(self):
+        """GET /market/data with symbol too short → 422."""
         app = self._authed_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                "/api/v1/market/structure/EURUSD?timeframe=BAD",
+                "/api/v1/market/data?symbol=EU",
                 headers={"Authorization": "Bearer fake"},
             )
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_get_pairs_returns_list(self):
-        """GET /market/pairs → 200 with list of pairs."""
+    async def test_get_symbols_returns_list(self):
+        """GET /market/symbols → 200 with list of pairs."""
         app = self._authed_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                "/api/v1/market/pairs",
+                "/api/v1/market/symbols",
                 headers={"Authorization": "Bearer fake"},
             )
         assert resp.status_code == 200
-        pairs = resp.json()
-        assert isinstance(pairs, list)
-        assert len(pairs) > 0
-
-    @pytest.mark.asyncio
-    async def test_get_pairs_filtered_by_session(self):
-        """GET /market/pairs?session=london → only London pairs."""
-        app = self._authed_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                "/api/v1/market/pairs?session=london",
-                headers={"Authorization": "Bearer fake"},
-            )
-        assert resp.status_code == 200
-        for pair in resp.json():
-            assert "london" in pair["session_affinity"]
-
-    @pytest.mark.asyncio
-    async def test_get_currency_strength_returns_8_currencies(self):
-        """GET /market/strength → 8 currency strengths."""
-        app = self._authed_app()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get(
-                "/api/v1/market/strength",
-                headers={"Authorization": "Bearer fake"},
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 8
+        symbols = resp.json()
+        assert isinstance(symbols, list)
+        assert len(symbols) > 0
+        assert symbols[0]["symbol"] == "EURUSD"
 
     @pytest.mark.asyncio
     async def test_market_requires_auth(self):
-        """GET /market/session without auth header → 401."""
+        """GET /market/symbols without auth header → 401."""
         from forex_trading.api.dependencies import get_db
 
         # Build a fresh app WITHOUT overriding get_current_user
@@ -619,7 +559,7 @@ class TestMarketEndpoints:
         app.dependency_overrides[get_db] = _fake_db
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            resp = await c.get("/api/v1/market/session")
+            resp = await c.get("/api/v1/market/symbols")
         assert resp.status_code == 401
 
 

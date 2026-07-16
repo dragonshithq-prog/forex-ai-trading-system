@@ -17,7 +17,6 @@ class Base(DeclarativeBase):
     """Base class for all database models."""
 
     type_annotation_map = {
-        uuid4: Uuid,
         PyUUID: Uuid,
         dict: JSON,
     }
@@ -42,7 +41,8 @@ class TimestampMixin:
 class UUIDPrimaryKeyMixin:
     """Mixin for UUID primary key."""
 
-    id: Mapped[uuid4] = mapped_column(
+    id: Mapped[PyUUID] = mapped_column(
+        Uuid,
         primary_key=True,
         default=uuid4,
         nullable=False,

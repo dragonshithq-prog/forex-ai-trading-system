@@ -1,0 +1,61 @@
+# =============================================================================
+# Backend ConfigMap — Forex AI Trading Platform (Non-sensitive Configuration)
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: forex-trading
+  labels:
+    app: backend
+    tier: api
+data:
+  # ── Application ──────────────────────────────────────────────────────────
+  APP_NAME: "Forex AI Trading System"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  API_PREFIX: "/api/v1"
+  WORKERS: "4"
+  DEBUG: "false"
+
+  # ── Database ─────────────────────────────────────────────────────────────
+  DATABASE_URL: "postgresql+asyncpg://forex@postgres-service:5432/forex_trading"
+  DATABASE_ECHO: "false"
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "10"
+  DATABASE_POOL_RECYCLE: "1800"
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  REDIS_URL: "redis://redis-service:6379/0"
+
+  # ── Kafka ────────────────────────────────────────────────────────────────
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  KAFKA_NUM_PARTITIONS: "6"
+  KAFKA_REPLICATION_FACTOR: "1"
+
+  # ── Monitoring ───────────────────────────────────────────────────────────
+  PROMETHEUS_ENABLED: "true"
+  PROMETHEUS_PORT: "8000"
+  OTEL_SERVICE_NAME: "forex-trading-backend"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+
+  # ── Risk Management ──────────────────────────────────────────────────────
+  MAX_POSITION_SIZE_PCT: "2.0"
+  MAX_TOTAL_EXPOSURE_PCT: "20.0"
+  MAX_DRAWDOWN_DAILY_PCT: "3.0"
+  MAX_DRAWDOWN_TOTAL_PCT: "15.0"
+  MAX_POSITIONS: "10"
+  RISK_PER_TRADE_PCT: "1.0"
+
+  # ── AI/ML Configuration ──────────────────────────────────────────────────
+  AI_MIN_AGENTS: "4"
+  AI_MIN_AGREEMENT_THRESHOLD: "0.60"
+  AI_MAX_CONFLICT_THRESHOLD: "0.30"
+  AI_ENSEMBLE_METHOD: "weighted"
+
+  # ── CORS ─────────────────────────────────────────────────────────────────
+  CORS_ORIGINS: "https://yourdomain.com"
+
+  # ── Broker ───────────────────────────────────────────────────────────────
+  OANDA_ENVIRONMENT: "practice"

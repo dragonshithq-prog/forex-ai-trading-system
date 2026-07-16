@@ -24,7 +24,13 @@ router = APIRouter(prefix="/strategy", tags=["Strategy & AI"])
 
 
 # Strategy endpoints
-@router.get("/strategies", response_model=list[StrategyResponse])
+@router.get(
+    "/strategies",
+    response_model=list[StrategyResponse],
+    summary="List strategies",
+    description="List strategies with optional filters by type or status",
+    operation_id="list_strategies",
+)
 async def list_strategies(
     strategy_type: str | None = None,
     status_filter: str | None = None,
@@ -44,7 +50,14 @@ async def list_strategies(
     return [StrategyResponse.model_validate(s) for s in strategies]
 
 
-@router.post("/strategies", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/strategies",
+    response_model=StrategyResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create strategy",
+    description="Create a new strategy (admin only)",
+    operation_id="create_strategy",
+)
 async def create_strategy(
     strategy_data: StrategyCreate,
     current_user: User = Depends(require_role("admin")),
@@ -66,7 +79,13 @@ async def create_strategy(
     return StrategyResponse.model_validate(strategy)
 
 
-@router.get("/strategies/{strategy_id}", response_model=StrategyResponse)
+@router.get(
+    "/strategies/{strategy_id}",
+    response_model=StrategyResponse,
+    summary="Get strategy",
+    description="Get a strategy by its ID",
+    operation_id="get_strategy",
+)
 async def get_strategy(
     strategy_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -82,7 +101,13 @@ async def get_strategy(
     return StrategyResponse.model_validate(strategy)
 
 
-@router.put("/strategies/{strategy_id}", response_model=StrategyResponse)
+@router.put(
+    "/strategies/{strategy_id}",
+    response_model=StrategyResponse,
+    summary="Update strategy",
+    description="Update an existing strategy (admin only)",
+    operation_id="update_strategy",
+)
 async def update_strategy(
     strategy_id: UUID,
     update_data: StrategyUpdate,
@@ -104,7 +129,13 @@ async def update_strategy(
     return StrategyResponse.model_validate(updated_strategy)
 
 
-@router.delete("/strategies/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/strategies/{strategy_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete strategy",
+    description="Soft delete a strategy (superadmin only)",
+    operation_id="delete_strategy",
+)
 async def delete_strategy(
     strategy_id: UUID,
     current_user: User = Depends(require_role("superadmin")),
@@ -120,7 +151,13 @@ async def delete_strategy(
 
 
 # AI Decision endpoints
-@router.get("/decisions", response_model=list[AIDecisionResponse])
+@router.get(
+    "/decisions",
+    response_model=list[AIDecisionResponse],
+    summary="List AI decisions",
+    description="List AI trading decisions with optional filters",
+    operation_id="list_ai_decisions",
+)
 async def list_ai_decisions(
     symbol: str | None = None,
     rejected_only: bool = False,
@@ -141,7 +178,13 @@ async def list_ai_decisions(
     return [AIDecisionResponse.model_validate(d) for d in decisions]
 
 
-@router.get("/decisions/{decision_id}", response_model=AIDecisionResponse)
+@router.get(
+    "/decisions/{decision_id}",
+    response_model=AIDecisionResponse,
+    summary="Get AI decision",
+    description="Get an AI decision by ID with explainability details",
+    operation_id="get_ai_decision",
+)
 async def get_ai_decision(
     decision_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -158,7 +201,13 @@ async def get_ai_decision(
 
 
 # Agent Performance endpoints
-@router.get("/agents", response_model=list[AgentPerformanceResponse])
+@router.get(
+    "/agents",
+    response_model=list[AgentPerformanceResponse],
+    summary="List agent performance",
+    description="List AI agent performance metrics with optional filtering",
+    operation_id="list_agent_performance",
+)
 async def list_agent_performance(
     agent_type: str | None = None,
     symbol: str | None = None,

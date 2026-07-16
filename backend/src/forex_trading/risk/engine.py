@@ -1,38 +1,49 @@
-"""Risk Engine - Authoritative risk management system."""
+"""Authoritative Risk Engine with full persistence and circuit breaker state machine.
 
+This engine is the SINGLE SOURCE OF TRUTH for what trades are allowed.
+Every trade MUST pass through ``assess_trade()`` before execution.
+All state is persisted to PostgreSQL — restarting the process does NOT reset risk limits.
+"""
+
+from __future__ import annotations
+
+import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
 
-from forex_trading.config import get_settings
-from forex_trading.core.exceptions import RiskLimitExceeded, CircuitBreakerActive
+from forex_trading.shared.database.uow import UnitOfWork, UnitOfWorkFactory
+from forex_trading.shared.monitoring import (
+    circuit_breaker_state,
+    risk_alerts_total,
+    risk_assessments_total,
+    risk_vetoes_total,
+)
 
 logger = structlog.get_logger()
-settings = get_settings()
+
+
+# ─── Value objects ────────────────────────────────────────────────────────────
 
 
 class RiskLevel(str, Enum):
-    """Risk alert levels."""
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
 
 
-class OverrideAction(str, Enum):
-    """Risk override actions."""
-    REJECT_ORDER = "reject_order"
-    CLOSE_POSITION = "close_position"
-    REDUCE_SIZE = "reduce_size"
-    HALT_TRADING = "halt_trading"
+class CircuitBreakerState(str, Enum):
+    CLOSED = "closed"           # Normal trading
+    OPEN = "open"               # All trades rejected
+    HALF_OPEN = "half_open"     # One trial trade allowed
 
 
 @dataclass
 class RiskLimits:
-    """Risk limits configuration."""
     max_position_size_pct: float = 2.0
     max_total_exposure_pct: float = 20.0
     max_positions: int = 10
@@ -46,297 +57,452 @@ class RiskLimits:
     max_spread_pips: float = 5.0
     max_consecutive_losses: int = 5
     cooldown_minutes: int = 60
-
-
-@dataclass
-class RiskState:
-    """Current risk state of the system."""
-    current_equity: float = 0.0
-    current_drawdown_pct: float = 0.0
-    daily_pnl: float = 0.0
-    weekly_pnl: float = 0.0
-    monthly_pnl: float = 0.0
-    total_exposure_pct: float = 0.0
-    open_positions: int = 0
-    consecutive_losses: int = 0
-    is_circuit_breaker_active: bool = False
-    circuit_breaker_until: datetime | None = None
-    last_updated: datetime = field(default_factory=datetime.utcnow)
-
-
-@dataclass
-class Position:
-    """Position for risk calculation."""
-    position_id: UUID
-    symbol: str
-    side: str  # "long" | "short"
-    size: float
-    entry_price: float
-    current_price: float
-    unrealized_pnl: float
-    stop_loss: float | None = None
+    max_daily_trades: int = 50
+    var_confidence_95_pct: float = 5.0
+    leverage_limit: int = 50
 
 
 @dataclass
 class RiskAssessment:
-    """Result of risk assessment for a proposed trade."""
     is_approved: bool
     adjusted_size: float | None = None
     max_allowed_size: float = 0.0
     warnings: list[str] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
-    risk_score: float = 0.0  # 0.0 (safe) - 1.0 (high risk)
+    risk_score: float = 0.0
+    assessment_id: UUID = field(default_factory=uuid4)
 
 
 @dataclass
 class RiskAlert:
-    """Risk management alert."""
     alert_id: UUID = field(default_factory=uuid4)
     level: RiskLevel = RiskLevel.INFO
     category: str = ""
     message: str = ""
     current_value: float = 0.0
     threshold_value: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    action_required: bool = False
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ─── RiskEngine ───────────────────────────────────────────────────────────────
 
 
 class RiskEngine:
-    """
-    AUTHORITATIVE Risk Engine.
+    """Authoritative risk management engine.
 
-    This engine has absolute override authority over all other components.
-    It can:
-    - REJECT any trade from any source
-    - FORCE close any position
-    - REDUCE position size
-    - BLOCK trading during extreme conditions
-    - EMERGENCY liquidate all positions
-
-    NO OTHER COMPONENT CAN OVERRIDE THE RISK ENGINE.
+    Accepts its dependencies (UoW factory) via constructor — no global state.
+    All writes go through the UnitOfWork and are committed atomically.
     """
 
-    def __init__(self, limits: RiskLimits | None = None) -> None:
-        self.limits = limits or RiskLimits(
-            max_position_size_pct=settings.MAX_POSITION_SIZE_PCT,
-            max_total_exposure_pct=settings.MAX_TOTAL_EXPOSURE_PCT,
-            max_positions=settings.MAX_POSITIONS,
-            daily_drawdown_limit_pct=settings.MAX_DRAWDOWN_DAILY_PCT,
-            max_drawdown_limit_pct=settings.MAX_DRAWDOWN_TOTAL_PCT,
-        )
-        self._state = RiskState()
-        self._positions: dict[UUID, Position] = {}
-        self._alerts: list[RiskAlert] = []
-        self._overrides: list[dict] = []
+    def __init__(
+        self,
+        limits: RiskLimits | None = None,
+        uow_factory: UnitOfWorkFactory | None = None,
+    ) -> None:
+        self.limits = limits or RiskLimits()
+        self._uow_factory = uow_factory
+        self._uow: UnitOfWork | None = None
+
+    def attach_uow(self, uow: UnitOfWork) -> None:
+        """Attach a UnitOfWork for this assessment cycle.
+        Must be called at the start of every trade assessment.
+        """
+        self._uow = uow
+
+    # ─── Public API ───────────────────────────────────────────────────────────
 
     async def assess_trade(
         self,
+        broker_account_id: UUID,
         symbol: str,
         side: str,
         size: float,
         entry_price: float,
         stop_loss: float | None = None,
+        confidence: float = 0.0,
     ) -> RiskAssessment:
-        """
-        Assess a proposed trade against all risk limits.
+        """Run ALL risk checks and return an assessment.
 
-        Args:
-            symbol: Trading symbol
-            side: Trade side (long/short)
-            size: Proposed position size
-            entry_price: Entry price
-            stop_loss: Optional stop loss price
-
-        Returns:
-            RiskAssessment with approval status and any adjustments
+        This is the only entry point for trade approval. Every check is
+        evaluated against persisted state loaded from the DB.
         """
-        warnings = []
-        violations = []
+        if self._uow is None:
+            raise RuntimeError("RiskEngine: no UnitOfWork attached. Call attach_uow() first.")
+
+        warnings: list[str] = []
+        violations: list[str] = []
         adjusted_size = size
 
-        # Check circuit breaker
-        if self._state.is_circuit_breaker_active:
-            if self._state.circuit_breaker_until and datetime.utcnow() < self._state.circuit_breaker_until:
-                violations.append("Circuit breaker is active")
-                return RiskAssessment(
-                    is_approved=False,
-                    violations=violations,
-                    risk_score=1.0,
-                )
-            else:
-                self._deactivate_circuit_breaker()
+        # 1. Load risk state from DB (always the latest persisted state)
+        risk_state = await self._uow.risk_states.get_by_account(broker_account_id)
 
-        # Check maximum positions
-        if self._state.open_positions >= self.limits.max_positions:
-            violations.append(f"Maximum positions reached: {self._state.open_positions}/{self.limits.max_positions}")
+        if risk_state is None:
+            # First time — create a fresh state
+            risk_state = await self._uow.risk_states.upsert(
+                broker_account_id,
+                {
+                    "current_equity": 0.0,
+                    "peak_equity": 0.0,
+                    "current_drawdown_pct": 0.0,
+                    "max_drawdown_pct": 0.0,
+                    "daily_pnl": 0.0,
+                    "weekly_pnl": 0.0,
+                    "monthly_pnl": 0.0,
+                    "total_exposure_pct": 0.0,
+                    "open_positions": 0,
+                    "consecutive_losses": 0,
+                    "daily_trades": 0,
+                    "is_circuit_breaker_active": False,
+                },
+            )
+            await self._uow.flush()
 
-        # Check total exposure
-        new_exposure = self._calculate_new_exposure(size, entry_price)
+        risk_score = self._compute_risk_score(risk_state)
+
+        # 2. Circuit breaker check — PERSISTED state
+        cb_violation = self._check_circuit_breaker(risk_state)
+        if cb_violation:
+            violations.append(cb_violation)
+            return RiskAssessment(
+                is_approved=False,
+                violations=violations,
+                risk_score=risk_score,
+            )
+
+        # 3. Maximum positions
+        if risk_state.open_positions >= self.limits.max_positions:
+            violations.append(
+                f"Maximum positions reached: {risk_state.open_positions}/{self.limits.max_positions}"
+            )
+
+        # 4. Total exposure
+        new_exposure = await self._compute_new_exposure(size, entry_price, risk_state)
         if new_exposure > self.limits.max_total_exposure_pct:
-            violations.append(f"Total exposure would exceed limit: {new_exposure:.1f}% > {self.limits.max_total_exposure_pct}%")
-            # Reduce size to fit
-            adjusted_size = self._calculate_max_allowed_size(entry_price)
+            violations.append(
+                f"Total exposure would exceed limit: {new_exposure:.1f}% > {self.limits.max_total_exposure_pct}%"
+            )
 
-        # Check per-position size
-        position_pct = self._calculate_position_pct(size, entry_price)
+        # 5. Per-position size
+        position_pct = self._position_size_pct(size, entry_price, risk_state)
         if position_pct > self.limits.max_position_size_pct:
-            warnings.append(f"Position size exceeds recommended: {position_pct:.1f}% > {self.limits.max_position_size_pct}%")
-            adjusted_size = self._calculate_max_position_size(entry_price)
+            warnings.append(
+                f"Position size exceeds recommended: {position_pct:.1f}% > {self.limits.max_position_size_pct}%"
+            )
+            adjusted_size = self._clamp_to_max_position_size(entry_price, risk_state)
 
-        # Check drawdown limits
-        if self._state.current_drawdown_pct >= self.limits.daily_drawdown_limit_pct:
-            violations.append(f"Daily drawdown limit reached: {self._state.current_drawdown_pct:.1f}%")
+        # 6. Drawdown limits
+        dd_violations = self._check_drawdown_limits(risk_state)
+        violations.extend(dd_violations)
 
-        if self._state.current_drawdown_pct >= self.limits.max_drawdown_limit_pct:
-            violations.append(f"Maximum drawdown limit reached: {self._state.current_drawdown_pct:.1f}%")
-            await self._activate_circuit_breaker("Maximum drawdown exceeded")
+        # 7. Consecutive losses
+        if risk_state.consecutive_losses >= self.limits.max_consecutive_losses:
+            violations.append(
+                f"Consecutive losses limit reached: {risk_state.consecutive_losses}/{self.limits.max_consecutive_losses}"
+            )
 
-        # Check consecutive losses
-        if self._state.consecutive_losses >= self.limits.max_consecutive_losses:
-            violations.append(f"Consecutive losses limit reached: {self._state.consecutive_losses}")
+        # 8. Daily trade count
+        if risk_state.daily_trades >= self.limits.max_daily_trades:
+            violations.append(
+                f"Daily trade limit reached: {risk_state.daily_trades}/{self.limits.max_daily_trades}"
+            )
 
-        # Calculate risk score
-        risk_score = self._calculate_risk_score()
+        # 9. Max drawdown — triggers circuit breaker
+        if risk_state.current_drawdown_pct >= self.limits.max_drawdown_limit_pct:
+            violations.append(
+                f"Maximum drawdown limit reached: {risk_state.current_drawdown_pct:.1f}%"
+            )
+            await self._activate_circuit_breaker(
+                broker_account_id, f"Max drawdown {risk_state.current_drawdown_pct:.1f}%"
+            )
+
+        # 10. Compute final risk score
+        risk_score = self._compute_risk_score(risk_state)
 
         is_approved = len(violations) == 0
 
+        risk_assessments_total.labels(approved=str(is_approved)).inc()
         if not is_approved:
+            risk_vetoes_total.labels(reason=violations[0] if violations else "unknown").inc()
             logger.warning(
                 "trade_rejected_by_risk",
                 symbol=symbol,
                 side=side,
                 size=size,
                 violations=violations,
+                risk_score=round(risk_score, 3),
             )
 
         return RiskAssessment(
             is_approved=is_approved,
             adjusted_size=adjusted_size if adjusted_size != size else None,
-            max_allowed_size=self._calculate_max_allowed_size(entry_price),
+            max_allowed_size=self._max_allowed_size(entry_price, risk_state),
             warnings=warnings,
             violations=violations,
             risk_score=risk_score,
         )
 
-    async def monitor_position(self, position: Position) -> RiskAlert | None:
-        """Monitor an open position for risk limits."""
-        self._positions[position.position_id] = position
+    async def record_trade_outcome(
+        self,
+        broker_account_id: UUID,
+        pnl: float,
+        won: bool,
+    ) -> None:
+        """Update risk state after a trade closes."""
+        if self._uow is None:
+            return
+        state = await self._uow.risk_states.get_by_account(broker_account_id)
+        if state is None:
+            return
 
-        # Check position P&L
-        if position.unrealized_pnl < 0:
-            loss_pct = abs(position.unrealized_pnl) / self._state.current_equity * 100
-            if loss_pct > self.limits.max_position_size_pct:
-                return RiskAlert(
-                    level=RiskLevel.WARNING,
-                    category="position_loss",
-                    message=f"Position {position.symbol} loss exceeds threshold: {loss_pct:.1f}%",
-                    current_value=loss_pct,
-                    threshold_value=self.limits.max_position_size_pct,
-                )
+        state.daily_pnl = (state.daily_pnl or 0.0) + pnl
+        state.weekly_pnl = (state.weekly_pnl or 0.0) + pnl
+        state.monthly_pnl = (state.monthly_pnl or 0.0) + pnl
+        state.daily_trades = (state.daily_trades or 0) + 1
 
-        return None
+        if won:
+            state.consecutive_losses = 0
+        else:
+            state.consecutive_losses = (state.consecutive_losses or 0) + 1
 
-    async def force_close_position(self, position_id: UUID, reason: str) -> dict:
-        """Force close a position (override action)."""
-        position = self._positions.get(position_id)
-        if not position:
-            return {"error": "Position not found"}
+        # Update peak equity
+        equity = state.current_equity
+        if equity > (state.peak_equity or 0.0):
+            state.peak_equity = equity
 
-        self._overrides.append({
-            "action": OverrideAction.CLOSE_POSITION,
-            "position_id": str(position_id),
-            "reason": reason,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        # Update max drawdown
+        if state.peak_equity and state.peak_equity > 0:
+            current_dd = max(0.0, (state.peak_equity - equity) / state.peak_equity * 100)
+            state.current_drawdown_pct = current_dd
+            if current_dd > (state.max_drawdown_pct or 0.0):
+                state.max_drawdown_pct = current_dd
 
-        logger.warning(
-            "force_close_position",
-            position_id=str(position_id),
-            symbol=position.symbol,
+        # Check circuit breaker for consecutive losses
+        if state.consecutive_losses >= self.limits.max_consecutive_losses:
+            await self._activate_circuit_breaker(
+                broker_account_id,
+                f"{state.consecutive_losses} consecutive losses",
+            )
+
+    async def update_account_state(
+        self,
+        broker_account_id: UUID,
+        equity: float,
+        total_exposure_pct: float,
+        open_positions: int,
+    ) -> None:
+        """Periodically sync risk state with broker account data."""
+        if self._uow is None:
+            return
+        state = await self._uow.risk_states.upsert(
+            broker_account_id,
+            {
+                "current_equity": equity,
+                "total_exposure_pct": total_exposure_pct,
+                "open_positions": open_positions,
+                "last_updated": datetime.now(timezone.utc),
+            },
+        )
+        # Update peak equity
+        if equity > (state.peak_equity or 0.0):
+            state.peak_equity = equity
+        # Update drawdown
+        if state.peak_equity and state.peak_equity > 0:
+            current_dd = max(0.0, (state.peak_equity - equity) / state.peak_equity * 100)
+            state.current_drawdown_pct = current_dd
+            if current_dd > (state.max_drawdown_pct or 0.0):
+                state.max_drawdown_pct = current_dd
+
+    async def emergency_liquidate_all(
+        self, broker_account_id: UUID, reason: str
+    ) -> dict:
+        """Trigger emergency liquidation and circuit breaker."""
+        logger.critical(
+            "emergency_liquidation",
+            broker_account_id=str(broker_account_id),
             reason=reason,
         )
+        await self._activate_circuit_breaker(broker_account_id, reason)
+        await self._create_alert(
+            level=RiskLevel.CRITICAL,
+            category="emergency_liquidation",
+            message=f"Emergency liquidation: {reason}",
+            action_required=True,
+        )
+        return {"status": "circuit_breaker_activated", "reason": reason}
 
-        return {"status": "closed", "position_id": str(position_id)}
+    async def deactivate_circuit_breaker(self, broker_account_id: UUID) -> None:
+        """Manually deactivate circuit breaker."""
+        circuit_breaker_state.labels(broker_account_id=str(broker_account_id)).set(0)
+        if self._uow is None:
+            return
+        state = await self._uow.risk_states.get_by_account(broker_account_id)
+        if state:
+            state.is_circuit_breaker_active = False
+            state.circuit_breaker_until = None
+            state.circuit_breaker_reason = None
 
-    async def emergency_liquidate_all(self, reason: str) -> dict:
-        """Emergency liquidation of all positions."""
-        self._overrides.append({
-            "action": OverrideAction.HALT_TRADING,
-            "reason": reason,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+    async def health_check(self) -> dict:
+        """Return risk system health status."""
+        return {
+            "limits": {
+                "max_positions": self.limits.max_positions,
+                "max_drawdown_pct": self.limits.max_drawdown_limit_pct,
+                "max_consecutive_losses": self.limits.max_consecutive_losses,
+            },
+        }
 
-        logger.critical("emergency_liquidation", reason=reason, positions=len(self._positions))
+    # ─── Circuit Breaker State Machine ────────────────────────────────────────
 
-        self._state.is_circuit_breaker_active = True
-        return {"status": "liquidating", "positions_count": len(self._positions)}
+    async def _activate_circuit_breaker(self, broker_account_id: UUID, reason: str) -> None:
+        circuit_breaker_state.labels(broker_account_id=str(broker_account_id)).set(1)
+        if self._uow is None:
+            return
+        state = await self._uow.risk_states.get_by_account(broker_account_id)
+        if state:
+            state.is_circuit_breaker_active = True
+            state.circuit_breaker_until = datetime.now(timezone.utc) + timedelta(
+                minutes=self.limits.cooldown_minutes
+            )
+            state.circuit_breaker_reason = reason
+            logger.critical(
+                "circuit_breaker_activated",
+                broker_account_id=str(broker_account_id),
+                reason=reason,
+                cooldown_minutes=self.limits.cooldown_minutes,
+            )
 
-    def update_state(self, equity: float, drawdown_pct: float) -> None:
-        """Update risk state with current account data."""
-        self._state.current_equity = equity
-        self._state.current_drawdown_pct = drawdown_pct
-        self._state.last_updated = datetime.utcnow()
+    def _check_circuit_breaker(self, state: Any) -> str | None:
+        if not state.is_circuit_breaker_active:
+            return None
+        if state.circuit_breaker_until and datetime.now(timezone.utc) >= state.circuit_breaker_until:
+            state.is_circuit_breaker_active = False
+            state.circuit_breaker_until = None
+            state.circuit_breaker_reason = None
+            logger.info("circuit_breaker_auto_reset", broker_account_id=str(state.broker_account_id))
+            return None
+        remaining = state.circuit_breaker_until - datetime.now(timezone.utc) if state.circuit_breaker_until else timedelta()
+        return f"Circuit breaker active ({int(remaining.total_seconds() // 60)}m remaining): {state.circuit_breaker_reason or 'unknown'}"
 
-    def get_state(self) -> RiskState:
-        """Get current risk state."""
-        return self._state
+    # ─── Drawdown Checks ─────────────────────────────────────────────────────
 
-    def get_alerts(self, limit: int = 100) -> list[RiskAlert]:
-        """Get recent risk alerts."""
-        return self._alerts[-limit:]
+    def _check_drawdown_limits(self, state: Any) -> list[str]:
+        violations: list[str] = []
+        dd = state.current_drawdown_pct or 0.0
+        if dd >= self.limits.daily_drawdown_limit_pct:
+            violations.append(
+                f"Daily drawdown limit reached: {dd:.1f}% >= {self.limits.daily_drawdown_limit_pct}%"
+            )
+        if dd >= self.limits.weekly_drawdown_limit_pct:
+            violations.append(
+                f"Weekly drawdown limit reached: {dd:.1f}% >= {self.limits.weekly_drawdown_limit_pct}%"
+            )
+        if dd >= self.limits.monthly_drawdown_limit_pct:
+            violations.append(
+                f"Monthly drawdown limit reached: {dd:.1f}% >= {self.limits.monthly_drawdown_limit_pct}%"
+            )
+        return violations
 
-    def _calculate_new_exposure(self, size: float, price: float) -> float:
-        """Calculate what total exposure would be after this trade."""
-        current_exposure = self._state.total_exposure_pct
-        new_exposure_value = (size * price) / self._state.current_equity * 100 if self._state.current_equity > 0 else 0
-        return current_exposure + new_exposure_value
+    def _check_daily_pnl(self, state: Any) -> str | None:
+        if (state.daily_pnl or 0.0) < 0 and abs(state.daily_pnl) / (state.current_equity or 1.0) * 100 >= self.limits.daily_drawdown_limit_pct:
+            return f"Daily loss limit: {abs(state.daily_pnl):.2f} ({abs(state.daily_pnl) / (state.current_equity or 1.0) * 100:.1f}%)"
+        return None
 
-    def _calculate_position_pct(self, size: float, price: float) -> float:
-        """Calculate position size as percentage of equity."""
-        if self._state.current_equity <= 0:
+    # ─── Sizing Helpers ───────────────────────────────────────────────────────
+
+    def kelly_size(
+        self,
+        win_rate: float,
+        avg_win: float,
+        avg_loss: float,
+        account_balance: float,
+        max_cap_pct: float = 0.02,
+    ) -> tuple[float, float]:
+        """Compute position size using fractional Kelly.
+
+        Args:
+            win_rate: Historical win rate (0.0-1.0)
+            avg_win: Average winning trade PnL in dollars
+            avg_loss: Average losing trade PnL in dollars
+            account_balance: Current account balance
+            max_cap_pct: Maximum fraction of account to risk (Kelly cap)
+
+        Returns:
+            (fractional_kelly, max_risk_amount)
+        """
+        if avg_loss <= 0 or win_rate <= 0 or win_rate >= 1:
+            return 0.01, account_balance * max_cap_pct * 0.5
+
+        b = avg_win / avg_loss  # odds ratio
+        p = win_rate
+        q = 1.0 - p
+        kelly_pct = (p * b - q) / b
+        if kelly_pct <= 0:
+            return 0.01, account_balance * max_cap_pct * 0.25
+
+        # Fractional Kelly (25% for safety)
+        fk = kelly_pct * 0.25
+        capped_fk = min(fk, max_cap_pct)
+        risk_amount = account_balance * capped_fk
+        return capped_fk, risk_amount
+
+    def _position_size_pct(self, size: float, price: float, state: Any) -> float:
+        equity = state.current_equity or 0.0
+        if equity <= 0 or price <= 0:
             return 0.0
-        return (size * price) / self._state.current_equity * 100
+        return (size * price) / equity * 100
 
-    def _calculate_max_allowed_size(self, price: float) -> float:
-        """Calculate maximum allowed position size."""
-        if price <= 0 or self._state.current_equity <= 0:
+    async def _compute_new_exposure(self, size: float, price: float, state: Any) -> float:
+        current = state.total_exposure_pct or 0.0
+        equity = state.current_equity or 0.0
+        if equity <= 0:
+            return current
+        return current + (size * price) / equity * 100
+
+    def _max_allowed_size(self, price: float, state: Any) -> float:
+        equity = state.current_equity or 0.0
+        if price <= 0 or equity <= 0:
             return 0.0
-        max_exposure = self._state.current_equity * (self.limits.max_total_exposure_pct / 100)
-        current_exposure_value = self._state.total_exposure_pct / 100 * self._state.current_equity
+        max_exposure = equity * (self.limits.max_total_exposure_pct / 100.0)
+        current_exposure_value = (state.total_exposure_pct or 0.0) / 100.0 * equity
         remaining = max_exposure - current_exposure_value
-        return max(0, remaining / price)
+        return max(0.0, remaining / price)
 
-    def _calculate_max_position_size(self, price: float) -> float:
-        """Calculate max size for single position limit."""
-        if price <= 0 or self._state.current_equity <= 0:
+    def _clamp_to_max_position_size(self, price: float, state: Any) -> float:
+        equity = state.current_equity or 0.0
+        if price <= 0 or equity <= 0:
             return 0.0
-        max_value = self._state.current_equity * (self.limits.max_position_size_pct / 100)
+        max_value = equity * (self.limits.max_position_size_pct / 100.0)
         return max_value / price
 
-    def _calculate_risk_score(self) -> float:
-        """Calculate overall risk score (0.0 - 1.0)."""
-        drawdown_score = self._state.current_drawdown_pct / self.limits.max_drawdown_limit_pct
-        exposure_score = self._state.total_exposure_pct / self.limits.max_total_exposure_pct
-        loss_score = self._state.consecutive_losses / self.limits.max_consecutive_losses
+    def _compute_risk_score(self, state: Any) -> float:
+        """Compute composite risk score (0.0 = safe, 1.0 = critical)."""
+        dd_score = (state.current_drawdown_pct or 0.0) / self.limits.max_drawdown_limit_pct if self.limits.max_drawdown_limit_pct > 0 else 0
+        exposure_score = (state.total_exposure_pct or 0.0) / self.limits.max_total_exposure_pct if self.limits.max_total_exposure_pct > 0 else 0
+        loss_score = (state.consecutive_losses or 0) / self.limits.max_consecutive_losses if self.limits.max_consecutive_losses > 0 else 0
+        cb_score = 1.0 if state.is_circuit_breaker_active else 0.0
+        return min(1.0, (dd_score + exposure_score + loss_score + cb_score) / 4.0)
 
-        return min(1.0, (drawdown_score + exposure_score + loss_score) / 3)
-
-    async def _activate_circuit_breaker(self, reason: str) -> None:
-        """Activate circuit breaker."""
-        from datetime import timedelta
-        self._state.is_circuit_breaker_active = True
-        self._state.circuit_breaker_until = datetime.utcnow() + timedelta(minutes=self.limits.cooldown_minutes)
-
-        alert = RiskAlert(
-            level=RiskLevel.CRITICAL,
-            category="circuit_breaker",
-            message=f"Circuit breaker activated: {reason}",
+    async def _create_alert(
+        self,
+        level: RiskLevel,
+        category: str,
+        message: str,
+        current_value: float = 0.0,
+        threshold_value: float = 0.0,
+        action_required: bool = False,
+    ) -> None:
+        if self._uow is None:
+            return
+        from forex_trading.shared.database.models_risk import RiskAlert as RiskAlertModel
+        alert = RiskAlertModel(
+            level=level,
+            category=category,
+            message=message,
+            current_value=current_value,
+            threshold_value=threshold_value,
+            action_required=action_required,
         )
-        self._alerts.append(alert)
-
-        logger.critical("circuit_breaker_activated", reason=reason)
-
-    def _deactivate_circuit_breaker(self) -> None:
-        """Deactivate circuit breaker."""
-        self._state.is_circuit_breaker_active = False
-        self._state.circuit_breaker_until = None
-        logger.info("circuit_breaker_deactivated")
+        risk_alerts_total.labels(level=level.value, category=category).inc()
+        self._uow.session.add(alert)
+        logger.warning("risk_alert_created", category=category, level=level.value, message=message)

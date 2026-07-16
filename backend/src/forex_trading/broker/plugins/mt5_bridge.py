@@ -270,6 +270,24 @@ class MT5BridgePlugin(BrokerPlugin):
             logger.error("mt5_cancel_order_failed", order_id=order_id, error=str(exc))
             return False
 
+    async def get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "H1",
+        count: int = 500,
+    ) -> list[dict]:
+        try:
+            resp = await self._send_command({
+                "cmd": "get_ohlcv",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "count": count,
+            })
+            return resp.get("data", [])
+        except Exception as exc:
+            logger.error("mt5_get_ohlcv_failed", symbol=symbol, error=str(exc))
+            return []
+
     async def get_order_history(self, since: datetime | None = None) -> list[dict]:
         cmd: dict[str, Any] = {"cmd": "history"}
         if since is not None:

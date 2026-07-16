@@ -119,9 +119,6 @@ class MarketDataService:
             return []
         try:
             return await plugin.get_ohlcv(symbol, timeframe, count)
-        except AttributeError:
-            # Plugin may not implement get_ohlcv; silently return empty
-            return []
         except Exception as exc:
             logger.error("broker_candle_fetch_failed", symbol=symbol, error=str(exc))
             return []

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -773,6 +773,37 @@ def _make_mock_strategy_engine() -> MagicMock:
     return se
 
 
+def _make_mock_position_manager() -> MagicMock:
+    pm = MagicMock()
+    pm.create_position = AsyncMock(return_value=uuid4())
+    pm.get_positions_for_symbol = AsyncMock(return_value=[])
+    pm.get_all_positions = AsyncMock(return_value=[])
+    pm.close_position = AsyncMock()
+    pm.update_position = AsyncMock()
+    return pm
+
+
+def _make_mock_uow_factory() -> MagicMock:
+    uow = MagicMock()
+    uow.orders = MagicMock()
+    uow.orders.add = AsyncMock()
+    uow.orders.update = AsyncMock()
+    uow.orders.get = AsyncMock()
+    uow.commit = AsyncMock()
+    uow.rollback = AsyncMock()
+    uow.__aenter__ = AsyncMock(return_value=uow)
+    uow.__aexit__ = AsyncMock(return_value=None)
+    factory = MagicMock()
+    factory.create = MagicMock(return_value=uow)
+    return factory
+
+
+def _make_mock_event_bus() -> MagicMock:
+    eb = MagicMock()
+    eb.publish = AsyncMock()
+    return eb
+
+
 @pytest.mark.unit
 class TestExecutionEngine:
     @pytest.fixture
@@ -782,6 +813,9 @@ class TestExecutionEngine:
             risk_engine=_make_mock_risk_engine(),
             broker_gateway=_make_mock_broker_gateway(),
             strategy_engine=_make_mock_strategy_engine(),
+            position_manager=_make_mock_position_manager(),
+            uow_factory=_make_mock_uow_factory(),
+            event_bus=_make_mock_event_bus(),
             allow_off_hours=True,  # bypass time check in unit tests
         )
 
@@ -805,6 +839,9 @@ class TestExecutionEngine:
             risk_engine=_make_mock_risk_engine(approved=False),
             broker_gateway=_make_mock_broker_gateway(),
             strategy_engine=_make_mock_strategy_engine(),
+            position_manager=_make_mock_position_manager(),
+            uow_factory=_make_mock_uow_factory(),
+            event_bus=_make_mock_event_bus(),
             allow_off_hours=True,
         )
         signal = _make_signal(confidence=0.85)
@@ -819,6 +856,9 @@ class TestExecutionEngine:
             risk_engine=_make_mock_risk_engine(),
             broker_gateway=_make_mock_broker_gateway(),
             strategy_engine=_make_mock_strategy_engine(),
+            position_manager=_make_mock_position_manager(),
+            uow_factory=_make_mock_uow_factory(),
+            event_bus=_make_mock_event_bus(),
             allow_off_hours=True,
         )
         signal = _make_signal(confidence=0.3)  # below 0.6 threshold
@@ -838,7 +878,7 @@ class TestExecutionEngine:
 
     @pytest.mark.asyncio
     async def test_process_signal_news_blackout(self, engine):
-        engine.add_news_event(datetime.utcnow())
+        engine.add_news_event(datetime.now(timezone.utc))
         signal = _make_signal(
             metadata={"lots": 0.1, "atr": 0.0005},
             confidence=0.85,
@@ -855,7 +895,7 @@ class TestExecutionEngine:
         # Pre-fill 3 EUR-correlated positions
         for _ in range(3):
             pid = uuid4()
-            engine._positions[pid] = _TrackedPosition(
+            engine._tracked_positions[pid] = _TrackedPosition(
                 position_id=pid, symbol="EURUSD", direction="long",
                 entry_price=1.1000, current_stop_loss=1.0950,
                 take_profit=1.1100, quantity=0.1, atr=0.0005,
@@ -866,13 +906,13 @@ class TestExecutionEngine:
         result = await engine.process_signal(signal, conn)
         assert result.success is False
         assert "correlated" in (result.rejection_reason or "").lower()
-        engine._positions.clear()
+        engine._tracked_positions.clear()
 
     @pytest.mark.asyncio
     async def test_manage_position_move_breakeven(self, engine):
         from forex_trading.execution.engine import _TrackedPosition
         pid = uuid4()
-        engine._positions[pid] = _TrackedPosition(
+        engine._tracked_positions[pid] = _TrackedPosition(
             position_id=pid, symbol="EURUSD", direction="long",
             entry_price=1.1000, current_stop_loss=1.0950,
             take_profit=1.1100, quantity=0.1, atr=0.0010,
@@ -888,7 +928,7 @@ class TestExecutionEngine:
     async def test_manage_position_partial_close_at_2x_atr(self, engine):
         from forex_trading.execution.engine import _TrackedPosition
         pid = uuid4()
-        engine._positions[pid] = _TrackedPosition(
+        engine._tracked_positions[pid] = _TrackedPosition(
             position_id=pid, symbol="EURUSD", direction="long",
             entry_price=1.1000, current_stop_loss=1.1000,
             take_profit=1.1300, quantity=0.1, atr=0.0010,
@@ -910,8 +950,8 @@ class TestExecutionEngine:
             take_profit=1.1100, quantity=0.1, atr=0.0010,
             strategy_type="trend_following", max_holding_minutes=1,
         )
-        pos.opened_at = datetime.utcnow() - timedelta(minutes=5)
-        engine._positions[pid] = pos
+        pos.opened_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        engine._tracked_positions[pid] = pos
         action = await engine.manage_position(pid, current_price=1.1005)
         assert action.action == "close"
         assert "max holding" in action.reason.lower()
@@ -926,7 +966,7 @@ class TestExecutionEngine:
         from forex_trading.execution.engine import _TrackedPosition
         conn = uuid4()
         pid = uuid4()
-        engine._positions[pid] = _TrackedPosition(
+        engine._tracked_positions[pid] = _TrackedPosition(
             position_id=pid, symbol="EURUSD", direction="long",
             entry_price=1.1000, current_stop_loss=1.0950,
             take_profit=1.1100, quantity=0.1, atr=0.0010,
@@ -935,14 +975,14 @@ class TestExecutionEngine:
         )
         success = await engine.close_position(pid, reason="test", partial_pct=100.0)
         assert success is True
-        assert pid not in engine._positions
+        assert pid not in engine._tracked_positions
 
     @pytest.mark.asyncio
     async def test_close_position_partial(self, engine):
         from forex_trading.execution.engine import _TrackedPosition
         conn = uuid4()
         pid = uuid4()
-        engine._positions[pid] = _TrackedPosition(
+        engine._tracked_positions[pid] = _TrackedPosition(
             position_id=pid, symbol="EURUSD", direction="long",
             entry_price=1.1000, current_stop_loss=1.0950,
             take_profit=1.1100, quantity=0.3, atr=0.0010,
@@ -951,8 +991,8 @@ class TestExecutionEngine:
         )
         success = await engine.close_position(pid, reason="partial", partial_pct=33.0)
         assert success is True
-        assert pid in engine._positions
-        assert engine._positions[pid].quantity == pytest.approx(0.2, abs=0.01)
+        assert pid in engine._tracked_positions
+        assert engine._tracked_positions[pid].quantity == pytest.approx(0.2, abs=0.01)
 
     @pytest.mark.asyncio
     async def test_emergency_close_all(self, engine):
@@ -960,7 +1000,7 @@ class TestExecutionEngine:
         conn = uuid4()
         for i in range(3):
             pid = uuid4()
-            engine._positions[pid] = _TrackedPosition(
+            engine._tracked_positions[pid] = _TrackedPosition(
                 position_id=pid, symbol="EURUSD", direction="long",
                 entry_price=1.1000, current_stop_loss=1.0950,
                 take_profit=1.1100, quantity=0.1, atr=0.0010,
@@ -970,22 +1010,13 @@ class TestExecutionEngine:
         result = await engine.emergency_close_all("emergency test")
         assert len(result["closed"]) == 3
         assert len(result["failed"]) == 0
-        assert len(engine._positions) == 0
+        assert len(engine._tracked_positions) == 0
 
     @pytest.mark.asyncio
     async def test_close_position_invalid_pct(self, engine):
         pid = uuid4()
         success = await engine.close_position(pid, reason="test", partial_pct=0.0)
         assert success is False
-
-    def test_calculate_position_size_normal(self, engine):
-        lots = engine._calculate_position_size("EURUSD", 10_000, 1.0, 50.0, 10.0)
-        assert lots == pytest.approx(0.20, abs=0.01)
-
-    def test_calculate_position_size_invalid_inputs(self, engine):
-        # All-zero inputs should return 0.01 (min lot), not crash
-        lots = engine._calculate_position_size("EURUSD", 0, 0, 0, 0)
-        assert lots == 0.01
 
     @pytest.mark.asyncio
     async def test_create_and_cancel_order(self, engine):
@@ -997,7 +1028,7 @@ class TestExecutionEngine:
             order_type=OrderType.MARKET,
             quantity=0.1,
         )
-        assert order.order_id in engine._pending_orders
+        assert order.order_id in engine._active_sagas
         result = await engine.cancel_order(order.order_id)
         assert result.success is True
-        assert order.order_id not in engine._pending_orders
+        assert order.order_id not in engine._active_sagas

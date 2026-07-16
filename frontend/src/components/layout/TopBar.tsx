@@ -1,7 +1,7 @@
 'use client';
 import { useTheme } from 'next-themes';
 import Link from 'next/link';
-import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff, Search, Settings, ShieldCheck } from 'lucide-react';
+import { Sun, Moon, Bell, LogOut, User, ChevronDown, Wifi, WifiOff, Search, Settings, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,7 @@ import { useWSStatus } from '@/lib/websocket';
 import { formatCurrency, formatPnL } from '@/lib/utils/formatters';
 import { getPnLColor } from '@/lib/utils/colors';
 import { api } from '@/lib/api';
+import { AnimatedNumber } from '@/components/effects/AnimatedNumber';
 import { useRouter } from 'next/navigation';
 
 interface TopBarProps {
@@ -47,13 +48,15 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
       className="fixed top-0 right-0 z-10 h-[60px] border-b border-border bg-card/95 backdrop-blur-sm flex items-center px-4 gap-4"
       style={{ left: sidebarCollapsed ? 64 : 220, transition: 'left 0.2s ease-in-out' }}
     >
+      {/* Gradient accent line */}
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-primary via-accent to-transparent" />
       {/* Account metrics */}
       <div className="flex items-center gap-6 flex-1 min-w-0">
         {/* Balance */}
         <div className="hidden sm:block">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-0.5">Balance</div>
           <div className="font-mono text-sm font-semibold text-foreground tabular-nums">
-            {formatCurrency(balance)}
+            <AnimatedNumber value={balance} prefix="$" />
           </div>
         </div>
 
@@ -63,7 +66,7 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
         <div className="hidden md:block">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-0.5">Equity</div>
           <div className="font-mono text-sm font-semibold text-foreground tabular-nums">
-            {formatCurrency(equity)}
+            <AnimatedNumber value={equity} prefix="$" />
           </div>
         </div>
 
@@ -73,7 +76,7 @@ export function TopBar({ sidebarCollapsed }: TopBarProps) {
         <div className="hidden sm:block">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-0.5">Day P&L</div>
           <div className={cn('font-mono text-sm font-semibold tabular-nums', getPnLColor(dayPnl))}>
-            {formatPnL(dayPnl)}
+            <AnimatedNumber value={dayPnl} formatter={(v) => formatPnL(v)} />
           </div>
         </div>
       </div>

@@ -40,10 +40,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 
 WORKDIR /build
 
-# Copy dependency manifest first (layer-cache optimisation)
+# Copy everything needed for build
 COPY backend/pyproject.toml backend/README.md* ./
-# Copy lock file if present
 COPY backend/uv.lock* ./
+COPY backend/src ./src
 
 # Build wheels for all production dependencies (no dev extras)
 # This populates /build/wheels/ so the final stage needs no build tools

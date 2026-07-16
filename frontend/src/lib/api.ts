@@ -150,7 +150,7 @@ async function register(data: RegisterRequest): Promise<LoginResponse> {
         id: 'demo_user_' + Date.now(),
         email: data.email,
         username: data.username,
-        full_name: data.full_name || null,
+        full_name: data.full_name || undefined,
         role: 'trader',
         is_active: true,
         mfa_enabled: false,

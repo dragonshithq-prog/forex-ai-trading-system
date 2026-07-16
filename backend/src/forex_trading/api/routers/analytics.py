@@ -151,7 +151,13 @@ def _generate_backtest_result(run_id: str, config: BacktestConfig) -> BacktestRe
     )
 
 
-@router.get("/metrics", response_model=PortfolioMetrics)
+@router.get(
+    "/metrics",
+    response_model=PortfolioMetrics,
+    summary="Get portfolio metrics",
+    description="Get current portfolio performance metrics",
+    operation_id="get_portfolio_metrics",
+)
 async def get_portfolio_metrics(
     current_user: User = Depends(get_current_user),
 ) -> PortfolioMetrics:
@@ -171,7 +177,13 @@ async def get_portfolio_metrics(
     )
 
 
-@router.get("/equity-curve", response_model=list[EquityPoint])
+@router.get(
+    "/equity-curve",
+    response_model=list[EquityPoint],
+    summary="Get equity curve",
+    description="Get portfolio equity curve over time",
+    operation_id="get_equity_curve",
+)
 async def get_equity_curve(
     granularity: str = Query("daily"),
     current_user: User = Depends(get_current_user),
@@ -180,14 +192,24 @@ async def get_equity_curve(
     return _generate_equity_curve(days, 100000, 0.67, 1.5, -0.6)
 
 
-@router.get("/monthly-returns")
+@router.get(
+    "/monthly-returns",
+    summary="Get monthly returns",
+    description="Get monthly portfolio returns for the current year",
+    operation_id="get_monthly_returns",
+)
 async def get_monthly_returns(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, float]:
     return _generate_monthly_returns()
 
 
-@router.post("/backtest")
+@router.post(
+    "/backtest",
+    summary="Run backtest",
+    description="Submit a backtest configuration for execution",
+    operation_id="run_backtest",
+)
 async def run_backtest(
     config: BacktestConfig,
     current_user: User = Depends(get_current_user),
@@ -197,7 +219,13 @@ async def run_backtest(
     return {"run_id": run_id}
 
 
-@router.get("/backtest/{run_id}", response_model=BacktestResult)
+@router.get(
+    "/backtest/{run_id}",
+    response_model=BacktestResult,
+    summary="Get backtest result",
+    description="Get the result of a previously submitted backtest",
+    operation_id="get_backtest_result",
+)
 async def get_backtest_result(
     run_id: str,
     current_user: User = Depends(get_current_user),

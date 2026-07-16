@@ -302,7 +302,7 @@ def _check_roaming_terminal(terminal_dir: Path) -> dict[str, Any] | None:
     if origin.exists():
         try:
             install_path = origin.read_text(encoding="utf-8").strip()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             pass
 
     return {

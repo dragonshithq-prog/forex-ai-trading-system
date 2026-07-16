@@ -10,11 +10,9 @@ from sqlalchemy.ext.asyncio import (
 )
 import structlog
 
-from forex_trading.config import get_settings
 from forex_trading.shared.database.models import Base
 
 logger = structlog.get_logger()
-settings = get_settings()
 
 
 class DatabaseManager:
@@ -28,7 +26,10 @@ class DatabaseManager:
     """
 
     def __init__(self, database_url: str | None = None) -> None:
-        self._database_url = database_url or settings.DATABASE_URL
+        from forex_trading.config import get_settings
+
+        self._settings = get_settings()
+        self._database_url = database_url or self._settings.DATABASE_URL
         self._engine = None
         self._session_factory = None
 
@@ -36,9 +37,9 @@ class DatabaseManager:
         """Initialize database engine and session factory."""
         self._engine = create_async_engine(
             self._database_url,
-            echo=settings.DATABASE_ECHO,
-            pool_size=settings.DATABASE_POOL_SIZE,
-            max_overflow=settings.DATABASE_MAX_OVERFLOW,
+            echo=self._settings.DATABASE_ECHO,
+            pool_size=self._settings.DATABASE_POOL_SIZE,
+            max_overflow=self._settings.DATABASE_MAX_OVERFLOW,
         )
         # Create all tables on startup
         async with self._engine.begin() as conn:
@@ -75,13 +76,27 @@ class DatabaseManager:
     async def health_check(self) -> bool:
         """Check database connectivity."""
         try:
+            from sqlalchemy import text
             async with self.session() as session:
-                await session.execute("SELECT 1")
+                await session.execute(text("SELECT 1"))
             return True
         except Exception as e:
             logger.error("database_health_check_failed", error=str(e))
             return False
 
 
-# Global database manager instance
-db_manager = DatabaseManager()
+# Global database manager instance (lazy — created on first access to avoid circular imports)
+_db_manager: DatabaseManager | None = None
+
+
+def get_db_manager() -> DatabaseManager:
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+    return _db_manager
+
+
+def __getattr__(name: str):
+    if name == "db_manager":
+        return get_db_manager()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

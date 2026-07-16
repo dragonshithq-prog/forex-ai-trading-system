@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from forex_trading.api.dependencies import get_current_user, get_db
@@ -27,6 +27,7 @@ from forex_trading.shared.database.crud_trading import (
     position_repository,
 )
 from forex_trading.shared.database.models_user import User
+from forex_trading.shared.security.audit import audit_service
 
 router = APIRouter(prefix="/trading", tags=["Trading"])
 
@@ -78,14 +79,27 @@ async def _verify_position_ownership(db: AsyncSession, position, current_user: U
 # Orders
 # ---------------------------------------------------------------------------
 
-@router.post("/orders", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/orders",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Place a new order",
+    description="Place a trading order (market, limit, stop, stop_limit) on a broker account",
+    operation_id="place_order",
+    responses={
+        201: {"description": "Order placed successfully"},
+        403: {"description": "Access denied"},
+        404: {"description": "Broker account not found"},
+        422: {"description": "Invalid order parameters"},
+    },
+)
 async def place_order(
+    request: Request,
     order_data: PlaceOrderRequest,
     broker_account_id: UUID = Query(..., description="Broker account to place order on"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OrderResponse:
-    # Rate limit: consider adding slowapi here in production
     account = await broker_account_repository.get(db, broker_account_id)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Broker account not found")
@@ -121,10 +135,34 @@ async def place_order(
         },
     )
 
+    # Audit log
+    ip_address = request.client.host if request.client else None
+    await audit_service.record(
+        db,
+        user_id=current_user.id,
+        action="trading.order.place",
+        resource_type="order",
+        resource_id=str(order.id),
+        details={
+            "symbol": order_data.symbol.upper(),
+            "side": order_data.side,
+            "order_type": order_data.order_type,
+            "quantity": order_data.quantity,
+            "broker_account_id": str(broker_account_id),
+        },
+        ip_address=ip_address,
+    )
+
     return _to_order_response(order)
 
 
-@router.get("/orders", response_model=list[OrderResponse])
+@router.get(
+    "/orders",
+    response_model=list[OrderResponse],
+    summary="List orders",
+    description="List orders with optional filtering by broker account, symbol, status, and date range",
+    operation_id="list_orders",
+)
 async def list_orders(
     broker_account_id: UUID | None = None,
     symbol: str | None = None,
@@ -153,7 +191,13 @@ async def list_orders(
     return [_to_order_response(o) for o in orders]
 
 
-@router.get("/orders/{order_id}", response_model=OrderResponse)
+@router.get(
+    "/orders/{order_id}",
+    response_model=OrderResponse,
+    summary="Get order by ID",
+    description="Retrieve a specific order by its UUID",
+    operation_id="get_order",
+)
 async def get_order(
     order_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -167,8 +211,15 @@ async def get_order(
     return _to_order_response(order)
 
 
-@router.delete("/orders/{order_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/orders/{order_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Cancel an order",
+    description="Cancel a pending or new order by its UUID",
+    operation_id="cancel_order",
+)
 async def cancel_order(
+    request: Request,
     order_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -186,6 +237,19 @@ async def cancel_order(
         )
 
     await order_repository.update_status(db, order_id=order_id, status="cancelled")
+
+    # Audit log
+    ip_address = request.client.host if request.client else None
+    await audit_service.record(
+        db,
+        user_id=current_user.id,
+        action="trading.order.cancel",
+        resource_type="order",
+        resource_id=str(order_id),
+        details={"symbol": order.symbol, "side": order.side, "status": "cancelled"},
+        ip_address=ip_address,
+    )
+
     return {"message": "Order cancelled", "order_id": str(order_id)}
 
 
@@ -193,7 +257,13 @@ async def cancel_order(
 # Positions
 # ---------------------------------------------------------------------------
 
-@router.get("/positions", response_model=list[PositionResponse])
+@router.get(
+    "/positions",
+    response_model=list[PositionResponse],
+    summary="List open positions",
+    description="List open positions with optional filtering by broker account or symbol",
+    operation_id="list_positions",
+)
 async def list_positions(
     broker_account_id: UUID | None = None,
     symbol: str | None = None,
@@ -217,7 +287,13 @@ async def list_positions(
     return [_to_position_response(p) for p in positions]
 
 
-@router.get("/positions/{position_id}", response_model=PositionResponse)
+@router.get(
+    "/positions/{position_id}",
+    response_model=PositionResponse,
+    summary="Get position by ID",
+    description="Retrieve a specific position by its UUID",
+    operation_id="get_position",
+)
 async def get_position(
     position_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -231,10 +307,17 @@ async def get_position(
     return _to_position_response(position)
 
 
-@router.post("/positions/{position_id}/close", status_code=status.HTTP_200_OK)
+@router.post(
+    "/positions/{position_id}/close",
+    status_code=status.HTTP_200_OK,
+    summary="Close a position",
+    description="Close a position fully or partially by percentage",
+    operation_id="close_position",
+)
 async def close_position(
+    request: Request,
     position_id: UUID,
-    request: ClosePositionRequest,
+    close_request: ClosePositionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -250,31 +333,56 @@ async def close_position(
             detail=f"Cannot close position with status '{position.status}'",
         )
 
-    if request.partial_pct == 100.0:
+    if close_request.partial_pct == 100.0:
         await position_repository.update(
             db, db_obj=position, obj_in={"status": "closed"}
         )
         closed_size = position.size
     else:
-        closed_size = position.size * (request.partial_pct / 100.0)
+        closed_size = position.size * (close_request.partial_pct / 100.0)
         remaining_size = position.size - closed_size
         await position_repository.update(
             db, db_obj=position, obj_in={"size": remaining_size}
         )
 
+    # Audit log
+    ip_address = request.client.host if request.client else None
+    await audit_service.record(
+        db,
+        user_id=current_user.id,
+        action="trading.position.close",
+        resource_type="position",
+        resource_id=str(position_id),
+        details={
+            "symbol": position.symbol,
+            "side": position.side,
+            "partial_pct": close_request.partial_pct,
+            "closed_size": closed_size,
+            "reason": close_request.reason,
+        },
+        ip_address=ip_address,
+    )
+
     return {
         "message": "Position close initiated",
         "position_id": str(position_id),
         "closed_size": closed_size,
-        "partial_pct": request.partial_pct,
-        "reason": request.reason,
+        "partial_pct": close_request.partial_pct,
+        "reason": close_request.reason,
     }
 
 
-@router.put("/positions/{position_id}/stop-loss", status_code=status.HTTP_200_OK)
+@router.put(
+    "/positions/{position_id}/stop-loss",
+    status_code=status.HTTP_200_OK,
+    summary="Update stop loss",
+    description="Update the stop loss price on an open position",
+    operation_id="update_stop_loss",
+)
 async def update_stop_loss(
+    request: Request,
     position_id: UUID,
-    request: UpdateStopLossRequest,
+    sl_request: UpdateStopLossRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -291,15 +399,35 @@ async def update_stop_loss(
         )
 
     await position_repository.update(
-        db, db_obj=position, obj_in={"stop_loss": request.stop_loss}
+        db, db_obj=position, obj_in={"stop_loss": sl_request.stop_loss}
     )
-    return {"message": "Stop loss updated", "position_id": str(position_id), "stop_loss": request.stop_loss}
+
+    # Audit log
+    ip_address = request.client.host if request.client else None
+    await audit_service.record(
+        db,
+        user_id=current_user.id,
+        action="trading.position.modify_sl",
+        resource_type="position",
+        resource_id=str(position_id),
+        details={"symbol": position.symbol, "new_stop_loss": sl_request.stop_loss},
+        ip_address=ip_address,
+    )
+
+    return {"message": "Stop loss updated", "position_id": str(position_id), "stop_loss": sl_request.stop_loss}
 
 
-@router.put("/positions/{position_id}/take-profit", status_code=status.HTTP_200_OK)
+@router.put(
+    "/positions/{position_id}/take-profit",
+    status_code=status.HTTP_200_OK,
+    summary="Update take profit",
+    description="Update the take profit price on an open position",
+    operation_id="update_take_profit",
+)
 async def update_take_profit(
+    request: Request,
     position_id: UUID,
-    request: UpdateTakeProfitRequest,
+    tp_request: UpdateTakeProfitRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -316,12 +444,25 @@ async def update_take_profit(
         )
 
     await position_repository.update(
-        db, db_obj=position, obj_in={"take_profit": request.take_profit}
+        db, db_obj=position, obj_in={"take_profit": tp_request.take_profit}
     )
+
+    # Audit log
+    ip_address = request.client.host if request.client else None
+    await audit_service.record(
+        db,
+        user_id=current_user.id,
+        action="trading.position.modify_tp",
+        resource_type="position",
+        resource_id=str(position_id),
+        details={"symbol": position.symbol, "new_take_profit": tp_request.take_profit},
+        ip_address=ip_address,
+    )
+
     return {
         "message": "Take profit updated",
         "position_id": str(position_id),
-        "take_profit": request.take_profit,
+        "take_profit": tp_request.take_profit,
     }
 
 
@@ -329,7 +470,13 @@ async def update_take_profit(
 # Trade history
 # ---------------------------------------------------------------------------
 
-@router.get("/history", response_model=list[DealResponse])
+@router.get(
+    "/history",
+    response_model=list[DealResponse],
+    summary="Get trade history",
+    description="Retrieve historical trades with optional filters",
+    operation_id="trade_history",
+)
 async def trade_history(
     broker_account_id: UUID | None = None,
     symbol: str | None = None,
@@ -353,7 +500,13 @@ async def trade_history(
 # Legacy endpoints kept for backward compatibility
 # ---------------------------------------------------------------------------
 
-@router.put("/orders/{order_id}", response_model=OrderFullResponse)
+@router.put(
+    "/orders/{order_id}",
+    response_model=OrderFullResponse,
+    summary="Modify an order",
+    description="Modify a pending order's parameters (price, quantity, etc.)",
+    operation_id="modify_order",
+)
 async def modify_order(
     order_id: UUID,
     modify_data: OrderModify,
@@ -377,7 +530,13 @@ async def modify_order(
     return OrderFullResponse.model_validate(updated_order)
 
 
-@router.get("/deals", response_model=list[DealResponse])
+@router.get(
+    "/deals",
+    response_model=list[DealResponse],
+    summary="List deals",
+    description="List executed deals with optional filtering by order or position",
+    operation_id="list_deals",
+)
 async def list_deals(
     broker_account_id: UUID | None = None,
     order_id: UUID | None = None,

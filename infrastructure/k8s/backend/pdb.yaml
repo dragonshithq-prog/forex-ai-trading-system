@@ -1,0 +1,38 @@
+# =============================================================================
+# PodDisruptionBudget — Backend Service
+# =============================================================================
+# Ensures high availability by preventing voluntary disruptions from
+# dropping below the minimum required replicas during maintenance events
+# (e.g., node upgrades, cluster autoscaling, etc.).
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: forex-trading
+  labels:
+    app: backend
+    tier: api
+    component: pdb
+spec:
+  # Allow at most 1 pod to be unavailable voluntarily
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: backend
+---
+# ── Frontend PDB ──────────────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+  namespace: forex-trading
+  labels:
+    app: frontend
+    tier: web
+    component: pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: frontend

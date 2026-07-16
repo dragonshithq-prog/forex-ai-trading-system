@@ -374,6 +374,48 @@ class OANDAPlugin(BrokerPlugin):
             logger.error("oanda_cancel_order_failed", order_id=order_id, error=str(exc))
             return False
 
+    async def get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "H1",
+        count: int = 500,
+    ) -> list[dict]:
+        if self._api is None:
+            return []
+
+        import oandapyV20.endpoints.instruments as instruments
+
+        tf_map = {
+            "M1": "M1", "M5": "M5", "M15": "M15", "M30": "M30",
+            "H1": "H1", "H4": "H4", "D1": "D", "W1": "W",
+        }
+        gran = tf_map.get(timeframe.upper(), "H1")
+
+        def _fetch() -> dict:
+            req = instruments.InstrumentCandles(
+                instrument=_to_oanda_instrument(symbol),
+                params={"granularity": gran, "count": min(count, 5000)},
+            )
+            return self._api.request(req)
+
+        data = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _with_retry(_fetch)
+        )
+        candles = []
+        for c in data.get("candles", []):
+            if c.get("complete") is False:
+                continue
+            mid = c.get("mid", {})
+            candles.append({
+                "time": c["time"],
+                "open": float(mid.get("o", 0)),
+                "high": float(mid.get("h", 0)),
+                "low": float(mid.get("l", 0)),
+                "close": float(mid.get("c", 0)),
+                "volume": int(c.get("volume", 0)),
+            })
+        return candles
+
     async def get_order_history(self, since: datetime | None = None) -> list[dict]:
         if self._api is None:
             raise RuntimeError("Not connected to OANDA")

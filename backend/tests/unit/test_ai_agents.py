@@ -6,6 +6,7 @@ import asyncio
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -795,12 +796,12 @@ class TestTradeExplainer:
 class TestAIOrchestrator:
     @pytest.mark.asyncio
     async def test_orchestrator_instantiates_with_9_agents(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         assert len(orch.list_agents()) == 9
 
     @pytest.mark.asyncio
     async def test_all_agent_ids_registered(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         expected_ids = {
             "market_structure", "trend", "liquidity", "volatility",
             "sentiment", "smart_money", "risk_ai", "entry_ai", "exit_ai",
@@ -810,28 +811,28 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_analyze_returns_orchestrator_result(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
         assert isinstance(result, OrchestratorResult)
 
     @pytest.mark.asyncio
     async def test_analyze_result_has_consensus(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
         assert isinstance(result.consensus, ConsensusResult)
 
     @pytest.mark.asyncio
     async def test_analyze_result_has_explanation(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
         assert isinstance(result.explanation, TradeExplanation)
 
     @pytest.mark.asyncio
     async def test_analyze_agent_signals_dict_populated(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
         assert isinstance(result.agent_signals, dict)
@@ -839,14 +840,14 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_should_trade_is_bool(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
         assert isinstance(result.should_trade, bool)
 
     @pytest.mark.asyncio
     async def test_explain_last_decision_returns_explanation(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         await orch.analyze(ctx)
         explanation = await orch.explain_last_decision()
@@ -854,13 +855,13 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_explain_last_decision_none_before_analyze(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         explanation = await orch.explain_last_decision()
         assert explanation is None
 
     @pytest.mark.asyncio
     async def test_register_unregister_agent(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         initial_count = len(orch.list_agents())
         new_agent = MarketStructureAgent()
         new_agent.agent_id = "test_duplicate"
@@ -871,7 +872,7 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_risk_veto_prevents_trade(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(
             candles=_make_candles(300),
             metadata={"spread": 50.0},  # extreme spread = risk veto
@@ -881,7 +882,7 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_disabled_agent_not_run(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         orch.get_agent("trend").disable()
         ctx = _base_context(candles=_make_candles(300))
         result = await orch.analyze(ctx)
@@ -890,7 +891,7 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_no_agents_enabled_returns_neutral(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         for agent in orch.list_agents():
             agent.disable()
         ctx = _base_context(candles=_make_candles(50))
@@ -900,7 +901,7 @@ class TestAIOrchestrator:
 
     @pytest.mark.asyncio
     async def test_concurrent_execution_completes(self):
-        orch = AIOrchestrator()
+        orch = AIOrchestrator(uow_factory=MagicMock())
         ctx = _base_context(candles=_make_candles(300))
         # Run analyze 3 times concurrently
         results = await asyncio.gather(

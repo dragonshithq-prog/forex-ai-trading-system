@@ -160,6 +160,15 @@ class BrokerPlugin(ABC):
         """Get order history."""
         pass
 
+    async def get_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "H1",
+        count: int = 500,
+    ) -> list[dict]:
+        """Get OHLCV candle data. Override in implementations that support it."""
+        return []
+
     async def test_connection(self, credentials: dict[str, Any]) -> bool:
         """Test connection with given credentials. Override in implementations."""
         try:
@@ -202,22 +211,18 @@ class BrokerGateway:
         """Get plugin by broker type."""
         return self._plugins.get(broker_type)
 
-    def _to_broker_credentials(self, credentials: Any) -> BrokerCredentials:
-        """Convert credentials dict or object to BrokerCredentials."""
-        if isinstance(credentials, BrokerCredentials):
-            return credentials
-        if isinstance(credentials, dict):
-            return BrokerCredentials(
-                broker_type=BrokerType.OANDA,
-                api_key=credentials.get("api_key"),
-                api_secret=credentials.get("api_secret"),
-                account_id=credentials.get("account_id") or credentials.get("account_number"),
-                password=credentials.get("password"),
-                host=credentials.get("host"),
-                port=credentials.get("port"),
-                environment=credentials.get("environment", "practice"),
-            )
-        return credentials
+    def _to_broker_credentials(self, credentials: dict, broker_type: BrokerType) -> BrokerCredentials:
+        """Convert credentials dict to BrokerCredentials."""
+        return BrokerCredentials(
+            broker_type=broker_type,
+            api_key=credentials.get("api_key"),
+            api_secret=credentials.get("api_secret"),
+            account_id=credentials.get("account_id") or credentials.get("account_number"),
+            password=credentials.get("password"),
+            host=credentials.get("host"),
+            port=credentials.get("port"),
+            environment=credentials.get("environment", "practice"),
+        )
 
     async def connect(
         self,
@@ -242,7 +247,7 @@ class BrokerGateway:
             return False
 
         if isinstance(credentials, dict):
-            credentials = self._to_broker_credentials(credentials)
+            credentials = self._to_broker_credentials(credentials, broker_type)
 
         self._connection_status[connection_id] = ConnectionStatus.CONNECTING
 
@@ -304,6 +309,10 @@ class BrokerGateway:
             cid for cid, status in self._connection_status.items()
             if status == ConnectionStatus.CONNECTED
         ]
+
+    def get_plugin_by_connection(self, connection_id: UUID) -> BrokerPlugin | None:
+        """Get the broker plugin instance for a given connection ID."""
+        return self._connections.get(connection_id)
 
     def get_best_connection(self, symbol: str) -> UUID | None:
         """Get best broker connection for a symbol (based on spread/latency)."""

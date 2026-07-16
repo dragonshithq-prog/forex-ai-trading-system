@@ -25,6 +25,7 @@ dependencies = [
     # Web Framework
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+    "gunicorn>=22.0.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.0",
     "python-multipart>=0.0.9",
@@ -38,6 +39,7 @@ dependencies = [
 
     # Message Bus
     "aio-pika>=9.4.0",
+    "aiokafka>=0.11.0",
 
     # gRPC
     "grpcio>=1.62.0",
@@ -56,6 +58,10 @@ dependencies = [
     "prometheus-client>=0.20.0",
     "opentelemetry-api>=1.24.0",
     "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.24.0",
 
     # Utilities
     "pydantic>=2.6.0",
@@ -143,7 +149,7 @@ disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "tests/smoke", "tests/chaos"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -161,6 +167,8 @@ markers = [
     "slow: Slow tests",
     "e2e: End-to-end tests",
     "load: Load / performance tests",
+    "smoke: Smoke tests (production health verification)",
+    "chaos: Chaos engineering tests (resilience validation)",
 ]
 
 [tool.coverage.run]

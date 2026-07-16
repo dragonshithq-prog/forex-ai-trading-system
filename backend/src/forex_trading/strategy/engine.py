@@ -202,7 +202,9 @@ class StrategyEngine:
             errors.append("Cannot execute neutral signal")
 
         # Strategy-specific validation
-        strategy_validation = strategy.validate_signal(None, signal)
+        from forex_trading.ai.agents.base import MarketContext
+        ctx = MarketContext(symbol=signal.symbol, timeframe="H1")
+        strategy_validation = strategy.validate_signal(ctx, signal)
         errors.extend(strategy_validation.errors)
         warnings.extend(strategy_validation.warnings)
 

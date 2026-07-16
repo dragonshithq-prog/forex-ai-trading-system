@@ -1,37 +1,76 @@
+# =============================================================================
+# Pre-commit Hooks — Forex AI Trading Platform
+# =============================================================================
+# Run: pre-commit install && pre-commit run --all-files
+# =============================================================================
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
       - id: end-of-file-fixer
       - id: check-yaml
+        args: [--allow-multiple-documents]
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
         args: ['--maxkb=500']
       - id: detect-private-key
-
-  - repo: https://github.com/psf/black
-    rev: 24.2.0
-    hooks:
-      - id: black
-        language_version: python3.12
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: mixed-line-ending
+        args: [--fix=lf]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.6.0
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix, --exit-non-zero-on-fix, --config=backend/pyproject.toml]
+        types_or: [python, pyi]
+      - id: ruff-format
+        args: [--config=backend/pyproject.toml]
+        types_or: [python, pyi]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+    rev: v1.11.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-all]
-        args: [--ignore-missing-imports]
+        additional_dependencies:
+          - "pydantic>=2.6.0"
+          - "types-PyYAML"
+          - "types-python-dateutil"
+          - "types-requests"
+        args:
+          - --config-file=backend/pyproject.toml
+          - --ignore-missing-imports
+        files: ^backend/src/
 
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
+    rev: v4.0.0-alpha.8
     hooks:
       - id: prettier
-        types_or: [javascript, jsx, ts, tsx, json, css, yaml]
+        types_or: [javascript, jsx, ts, tsx, json, css, yaml, markdown]
+        args: [--print-width=100, --prose-wrap=always]
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.41.0
+    hooks:
+      - id: markdownlint
+        args: [--disable=MD013, --disable=MD033]
+        files: \.md$
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: (\.secrets\.baseline|\.env\.example|.*\.tf|pyproject\.toml)

@@ -21,7 +21,13 @@ from forex_trading.shared.database.models_user import User
 router = APIRouter(prefix="/accounts", tags=["Broker Accounts"])
 
 
-@router.get("/", response_model=list[BrokerAccountResponse])
+@router.get(
+    "/",
+    response_model=list[BrokerAccountResponse],
+    summary="List accounts",
+    description="List broker accounts for the current user",
+    operation_id="list_accounts",
+)
 async def list_accounts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -33,7 +39,14 @@ async def list_accounts(
     return accounts
 
 
-@router.post("/", response_model=BrokerAccountResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=BrokerAccountResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create account",
+    description="Create a new broker account (trader role required)",
+    operation_id="create_account",
+)
 async def create_account(
     request: BrokerAccountCreate,
     db: AsyncSession = Depends(get_db),
@@ -59,7 +72,13 @@ async def create_account(
     return account
 
 
-@router.get("/{account_id}", response_model=BrokerAccountResponse)
+@router.get(
+    "/{account_id}",
+    response_model=BrokerAccountResponse,
+    summary="Get account",
+    description="Get broker account by ID",
+    operation_id="get_account",
+)
 async def get_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -83,7 +102,13 @@ async def get_account(
     return account
 
 
-@router.put("/{account_id}", response_model=BrokerAccountResponse)
+@router.put(
+    "/{account_id}",
+    response_model=BrokerAccountResponse,
+    summary="Update account",
+    description="Update broker account settings (trader role required)",
+    operation_id="update_account",
+)
 async def update_account(
     account_id: UUID,
     request: BrokerAccountUpdate,
@@ -111,7 +136,13 @@ async def update_account(
     return updated_account
 
 
-@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete account",
+    description="Soft delete a broker account (trader role required)",
+    operation_id="delete_account",
+)
 async def delete_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -134,7 +165,13 @@ async def delete_account(
     await broker_account_repository.soft_delete(db, id=account_id)
 
 
-@router.get("/{account_id}/connections", response_model=list[BrokerConnectionResponse])
+@router.get(
+    "/{account_id}/connections",
+    response_model=list[BrokerConnectionResponse],
+    summary="List account connections",
+    description="List connections for a specific broker account",
+    operation_id="list_account_connections",
+)
 async def list_connections(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),

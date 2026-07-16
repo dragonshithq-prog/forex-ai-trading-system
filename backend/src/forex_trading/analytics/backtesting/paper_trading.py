@@ -355,27 +355,34 @@ class PaperTradingEngine:
     async def _check_for_entry(self, symbol: str, price: float) -> None:
         """Check AI orchestrator for a new signal and open paper trade if approved."""
         try:
-            # Only enter if no open position for this symbol
             if any(p.symbol == symbol for p in self._positions.values()):
                 return
 
-            # Get current candles from market data
             candles = await self._market_data.get_ohlcv(symbol, "H1", limit=100)
             if not candles or len(candles) < 20:
                 return
 
-            # Ask AI orchestrator for a signal
-            signal = await self._ai_orchestrator.get_signal(symbol, candles)
-            if signal is None or signal.get("direction") == "neutral":
+            from forex_trading.ai.agents.base import MarketContext, MarketRegime
+
+            context = MarketContext(
+                symbol=symbol,
+                timeframe="H1",
+                candles=candles,
+                metadata={"entry_price": price, "symbol": symbol},
+                regime=MarketRegime.RANGING,
+            )
+            result = await self._ai_orchestrator.analyze(context)
+
+            if not result.should_trade:
                 return
 
-            # Risk engine approval
+            direction = result.consensus.direction.value
             assessment = await self._risk_engine.assess_trade(
                 symbol=symbol,
-                side=signal["direction"],
-                size=signal.get("size", 0.01),
+                side=direction,
+                size=result.consensus.confidence * 0.01,
                 entry_price=price,
-                stop_loss=signal.get("stop_loss"),
+                stop_loss=None,
             )
             if not assessment.is_approved:
                 logger.debug("paper_trade_rejected_by_risk", symbol=symbol)
@@ -383,12 +390,12 @@ class PaperTradingEngine:
 
             await self.simulate_fill({
                 "symbol": symbol,
-                "direction": signal["direction"],
-                "size": assessment.adjusted_size or signal.get("size", 0.01),
-                "stop_loss": signal["stop_loss"],
-                "take_profit": signal["take_profit"],
+                "direction": direction,
+                "size": assessment.adjusted_size or 0.01,
+                "stop_loss": None,
+                "take_profit": None,
                 "entry_price": price,
-                "strategy_type": signal.get("strategy_type", "unknown"),
+                "strategy_type": result.explanation.strategy_selected,
             })
 
         except Exception as exc:

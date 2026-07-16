@@ -434,12 +434,12 @@ class TestInputValidation:
         assert resp.status_code != 500
 
     @pytest.mark.asyncio
-    async def test_candles_count_exceeds_max_returns_422(self):
-        """GET /market/candles with count=9999 → 422 (above max 1000)."""
+    async def test_symbol_too_short_returns_422(self):
+        """GET /market/data with symbol=EU (min_length=6) → 422."""
         app = self._authed_app_no_db()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(
-                "/api/v1/market/candles/EURUSD?timeframe=H1&count=9999",
+                "/api/v1/market/data?symbol=EU",
                 headers={"Authorization": "Bearer fake"},
             )
         assert resp.status_code == 422

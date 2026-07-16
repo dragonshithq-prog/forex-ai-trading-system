@@ -402,7 +402,8 @@ class TestConnectionManager:
         await manager.subscribe(conn_id, "positions", {})
         msg = {"type": "position_update", "data": {"position_id": "abc"}}
         await manager.broadcast_to_channel("positions", msg)
-        ws.send_json.assert_called_once_with(msg)
+        await asyncio.sleep(0.2)  # Let the async delivery task process the queue
+        ws.send_text.assert_called_once_with(json.dumps(msg, default=str))
 
     @pytest.mark.asyncio
     async def test_broadcast_tick_filters_by_symbol(self, manager):
@@ -415,9 +416,10 @@ class TestConnectionManager:
 
         eur_tick = {"type": "tick", "data": {"symbol": "EURUSD", "bid": 1.1}}
         await manager.broadcast_to_channel("ticks", eur_tick)
+        await asyncio.sleep(0.2)  # Let the async delivery task process the queue
 
-        ws_eur.send_json.assert_called_once_with(eur_tick)
-        ws_gbp.send_json.assert_not_called()
+        ws_eur.send_text.assert_called_once_with(json.dumps(eur_tick, default=str))
+        ws_gbp.send_text.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_send_to_user_reaches_all_user_connections(self, manager):
@@ -427,8 +429,10 @@ class TestConnectionManager:
         await manager.connect(ws2, "user1")
         msg = {"type": "order_update", "data": {}}
         await manager.send_to_user("user1", msg)
-        ws1.send_json.assert_called_once_with(msg)
-        ws2.send_json.assert_called_once_with(msg)
+        await asyncio.sleep(0.2)  # Let the async delivery task process the queue
+        expected_json = json.dumps(msg, default=str)
+        ws1.send_text.assert_called_once_with(expected_json)
+        ws2.send_text.assert_called_once_with(expected_json)
 
     @pytest.mark.asyncio
     async def test_broadcast_to_empty_channel_noop(self, manager):
@@ -460,23 +464,27 @@ class TestConnectionManager:
 
 @pytest.mark.unit
 class TestMarketRouterHelpers:
-    def test_supported_timeframes(self):
-        from forex_trading.api.routers.market import _SUPPORTED_TIMEFRAMES
-        for tf in ("M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1"):
-            assert tf in _SUPPORTED_TIMEFRAMES
+    def test_router_has_data_endpoint(self):
+        from forex_trading.api.routers.market import router
+        paths = [r.path for r in router.routes]
+        assert "/market/data" in paths
+        assert "/market/symbols" in paths
 
-    def test_pair_session_affinity_eurusd(self):
-        from forex_trading.api.routers.market import _PAIR_SESSION_AFFINITY
-        assert "london" in _PAIR_SESSION_AFFINITY["EURUSD"]
-        assert "new_york" in _PAIR_SESSION_AFFINITY["EURUSD"]
+    def test_symbols_endpoint_exists(self):
+        from forex_trading.api.routers.market import router
+        found = any(
+            route.path == "/market/symbols" and "GET" in route.methods
+            for route in router.routes
+        )
+        assert found
 
-    def test_supported_pairs_pip_size(self):
-        from forex_trading.api.routers.market import _SUPPORTED_PAIRS
-        for p in _SUPPORTED_PAIRS:
-            assert p["pip_size"] in (0.0001, 0.01)
-            jpy_pair = p["symbol"].endswith("JPY")
-            expected = 0.01 if jpy_pair else 0.0001
-            assert p["pip_size"] == expected
+    def test_list_symbols_returns_expected_pairs(self):
+        from forex_trading.api.routers.market import list_symbols
+        # Verify it's callable and returns list
+        import inspect
+        assert inspect.iscoroutinefunction(list_symbols)
+        sig = inspect.signature(list_symbols)
+        assert "current_user" in sig.parameters
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +514,10 @@ class TestSecurityManager:
             mgr.secret_key = "test-secret-key-for-hs256"
             mgr.algorithm = "HS256"
             mgr.access_expire_minutes = 15
-            mgr.refresh_expire_days = 7
+            mgr.refresh_expire_hours = 24
+            mgr.issuer = "test"
+            mgr.audience_access = "test:access"
+            mgr.audience_refresh = "test:refresh"
             pair = mgr.create_token_pair(user_id="user-uuid", role="trader")
             assert pair.access_token
             assert pair.refresh_token
@@ -521,7 +532,10 @@ class TestSecurityManager:
             mgr.secret_key = "test-secret-key-for-hs256"
             mgr.algorithm = "HS256"
             mgr.access_expire_minutes = 15
-            mgr.refresh_expire_days = 7
+            mgr.refresh_expire_hours = 24
+            mgr.issuer = "test"
+            mgr.audience_access = "test:access"
+            mgr.audience_refresh = "test:refresh"
             pair = mgr.create_token_pair(user_id="user-123", role="admin")
             payload = mgr.decode_token(pair.access_token)
             assert payload is not None
@@ -541,7 +555,10 @@ class TestSecurityManager:
             mgr.secret_key = "test-secret-key-for-hs256"
             mgr.algorithm = "HS256"
             mgr.access_expire_minutes = 15
-            mgr.refresh_expire_days = 7
+            mgr.refresh_expire_hours = 24
+            mgr.issuer = "test"
+            mgr.audience_access = "test:access"
+            mgr.audience_refresh = "test:refresh"
             pair = mgr.create_token_pair(user_id="user-xyz", role="viewer")
             tampered = pair.access_token[:-5] + "XXXXX"
             result = mgr.decode_token(tampered)

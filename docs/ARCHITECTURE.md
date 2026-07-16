@@ -1,349 +1,718 @@
-# Architecture – Institutional Forex AI Trading Platform
+# Architecture — Institutional Forex AI Trading Platform
 
-## 1. System Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         EXTERNAL WORLD                                  │
-│   Brokers (OANDA, MT4/5)    News Feeds    Market Data Vendors           │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                          INGESTION LAYER                                │
-│   Broker Plugins (gRPC)   ◄──────────────►  Market Data Service         │
-│   (OANDA / MT4 / MT5 / Paper)              (Tick, Candle, Calendar)     │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │  Kafka Topics
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                          AI ANALYSIS LAYER                              │
-│                                                                         │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │              AI Orchestrator (9 Agents)                         │   │
-│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │   │
-│   │  │ Trend    │ │Market    │ │Liquidity │ │   Volatility     │   │   │
-│   │  │ Agent    │ │Structure │ │ Agent    │ │    Agent         │   │   │
-│   │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │   │
-│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │   │
-│   │  │Sentiment │ │SmartMoney│ │  Risk AI │ │  Entry / Exit    │   │   │
-│   │  │  Agent   │ │  Agent   │ │  Agent   │ │    Agents        │   │   │
-│   │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │   │
-│   │                        ▼                                        │   │
-│   │            ┌───────────────────────┐                            │   │
-│   │            │   Consensus Engine    │  Weighted vote             │   │
-│   │            │   agreement_threshold │  + conflict detection      │   │
-│   │            └───────────────────────┘                            │   │
-│   │                        ▼                                        │   │
-│   │            ┌───────────────────────┐                            │   │
-│   │            │    XAI Explainer      │  SHAP-based rationale      │   │
-│   │            └───────────────────────┘                            │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │  OrchestratorResult
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                         STRATEGY LAYER                                  │
-│   StrategyRegistry ──► StrategyEngine ──► PositionSizer                 │
-│   (7 strategies: TrendFollowing, Pullback, Breakout, MeanReversion,     │
-│    Scalping, LondonOpen, AsianRange)                                    │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │  TradeSignal
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                         RISK ENGINE (Authoritative)                     │
-│   Circuit Breaker ◄── DrawdownMonitor ◄── PositionMonitor               │
-│   NO OTHER COMPONENT CAN OVERRIDE THE RISK ENGINE                       │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │  RiskAssessment (approved/rejected)
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                         EXECUTION ENGINE                                │
-│   OrderManager ──► BrokerGateway ──► TrailingStop Manager               │
-└───────────────────────────────────┬─────────────────────────────────────┘
-                                    │
-┌───────────────────────────────────▼─────────────────────────────────────┐
-│                        INFRASTRUCTURE LAYER                             │
-│   PostgreSQL/TimescaleDB   Redis Cache   Kafka Message Bus              │
-│   Prometheus Metrics       Jaeger Tracing    Grafana Dashboards         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+> **Documentation for version 0.1.0**  
+> Last updated: 2026-07-14
 
 ---
 
-## 2. AI Multi-Agent System
+## Table of Contents
 
-### Architecture
-
-The AI layer consists of **9 specialised agents** and a **Consensus Engine**.
-
-| Agent | Focus | Weight (Trending) |
-|---|---|---|
-| `market_structure` | ICT/SMC swing highs/lows, BOS, CHoCH | 0.90 |
-| `trend` | EMA20/50/200, ADX, MACD | 0.90 |
-| `liquidity` | Order blocks, FVGs, liquidity sweeps | 0.80 |
-| `volatility` | ATR, Bollinger Bands, VWAP spread | 0.80 |
-| `sentiment` | RSI, CoT positioning, momentum | 0.75 |
-| `smart_money` | Discount/Premium zone, equilibrium | 0.80 |
-| `risk_ai` | Spread, drawdown, news veto | 0.95 (all regimes) |
-| `entry_ai` | Micro-structure entry timing, R:R | 0.85 (all regimes) |
-| `exit_ai` | Trail stop, TP, reversal, session-end | 0.85 (all regimes) |
-
-### How Agents Work
-
-1. **Analyse**: Each agent receives a `MarketContext` (candles, regime, metadata).
-2. **Vote**: Each agent emits an `AgentSignal` with `direction` (LONG/SHORT/NEUTRAL) and `confidence` (0–1).
-3. **Weigh**: Weights are regime-dependent (e.g., `trend` agent gets high weight in TRENDING_UP).
-4. **Aggregate**: `ConsensusEngine` computes a weighted vote; if `agreement_ratio >= 0.60` the signal is actionable.
-5. **Explain**: `TradeExplainer` generates a SHAP-style narrative showing which agents drove the decision.
-
-### Consensus Engine
-
-```python
-# Pseudo-code
-weighted_long  = sum(w * conf for agent, w, conf if direction == LONG)
-weighted_short = sum(w * conf for agent, w, conf if direction == SHORT)
-agreement_ratio = max(weighted_long, weighted_short) / total_weight
-is_actionable = agreement_ratio >= threshold AND risk_agent != NEUTRAL
-```
-
-### Risk Agent Veto
-
-The `RiskAgent` (agent_id=`risk_ai`) acts as an independent circuit-breaker within the AI layer:
-- If spread > 5 pips → NEUTRAL (no trade)
-- If drawdown > 5% → NEUTRAL
-- If high-impact news within 30 min → NEUTRAL
-- If open_positions >= limit → NEUTRAL
-
-Even if all other 8 agents vote LONG unanimously, a NEUTRAL from `risk_ai` prevents a trade.
+1. [System Context Diagram](#1-system-context-diagram)
+2. [Container Diagram](#2-container-diagram)
+3. [Component Diagram](#3-component-diagram)
+4. [Data Flow Diagrams](#4-data-flow-diagrams)
+5. [Deployment Architecture](#5-deployment-architecture)
+6. [Design Decisions and Trade-offs](#6-design-decisions-and-trade-offs)
 
 ---
 
-## 3. Risk Management
-
-### Circuit Breaker
+## 1. System Context Diagram
 
 ```
-Daily Drawdown ≥ 3%  ──► WARNING alert
-Max Drawdown   ≥ 15% ──► CIRCUIT BREAKER ACTIVATED
-                         (all trading halted for cooldown_minutes)
-                         (emergency_liquidate available to admin)
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              TRADERS & ADMINISTRATORS                             │
+│                    (Dashboard, API Clients, Mobile, Telegram)                      │
+└────────────────────────────────┬─────────────────────────────────────────────────┘
+                                 │  HTTPS / WSS
+                                 │
+┌────────────────────────────────▼─────────────────────────────────────────────────┐
+│                             FOREX AI TRADING SYSTEM                                │
+│                                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│  │  "An institutional-grade autonomous AI trading platform that executes       │  │
+│  │   forex trades based on multi-agent AI analysis, institutional risk         │  │
+│  │   management, and configurable strategies."                                 │  │
+│  └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │  REST API    │  │  WebSocket   │  │  Dashboard   │  │   Scheduled Tasks    │ │
+│  │  (FastAPI)   │  │  Streaming   │  │  (Next.js)   │  │   (Analytics, etc.) │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+└──────────┬───────────────────────────────────────────────────────────────────────┘
+           │
+           │  HTTPS / REST / WS
+           ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                             EXTERNAL SYSTEMS                                       │
+│                                                                                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │  OANDA       │  │  MetaTrader  │  │  FXCM / IB   │  │  Market Data Feeds   │ │
+│  │  (REST API)  │  │  4/5 (TCP)   │  │  (WebSocket) │  │  (News, Calendar)    │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Position Limits
+### External Systems
 
-| Limit | Default | Override |
-|---|---|---|
-| `max_position_size_pct` | 2% of equity | Admin via PUT /risk/config |
-| `max_total_exposure_pct` | 20% of equity | Admin |
-| `max_positions` | 10 concurrent | Admin |
-| `max_consecutive_losses` | 5 | Admin |
-| `max_spread_pips` | 5 pips | Admin |
-
-### Position Sizing (PositionSizer)
-
-```
-risk_amount  = account_balance × risk_pct / 100
-pip_value    = contract_size × pip_size  (÷ price for JPY pairs)
-lot_size     = risk_amount / (stop_loss_pips × pip_value)
-lot_size     = clamp(lot_size, 0.01, max_allowed)
-```
-
-### Trailing Stop Logic (ExecutionEngine)
-
-| Threshold | Action |
-|---|---|
-| Price moves +1×ATR in favour | Move SL to breakeven |
-| Price moves +2×ATR | Partial close 33% |
-| Price moves +3×ATR | Trail at 2×ATR distance |
-| Holding time > `max_holding_minutes` | Force close |
+| System | Protocol | Purpose |
+|--------|----------|---------|
+| **OANDA** | REST + Streaming (v20) | Primary broker for development and live trading |
+| **MetaTrader 4** | TCP Socket (EA Bridge) | Legacy broker connectivity |
+| **MetaTrader 5** | Native Python library | Modern MetaQuotes platform |
+| **FXCM** | REST + WebSocket | Alternative broker |
+| **Interactive Brokers** | TWS API | Multi-asset brokerage |
+| **Market Data Vendors** | Various | News feeds, economic calendar |
 
 ---
 
-## 4. Strategy Engine
-
-### Available Strategies
-
-| Strategy | Best Regime | Key Filters |
-|---|---|---|
-| `TrendFollowing` | TRENDING_UP, TRENDING_DOWN | EMA alignment, ADX ≥ 25, R:R ≥ 2 |
-| `Pullback` | TRENDING_UP, TRENDING_DOWN | Entry within 10 pips of EMA20, RSI < 65 |
-| `Breakout` | TRENDING_UP, VOLATILE | Volume × 1.2 avg, entry above resistance |
-| `MeanReversion` | RANGING | Entry at Bollinger lower/upper, RSI oversold/overbought |
-| `Scalping` | Any (London/NY overlap only) | Spread ≤ 1.5 pips, order flow imbalance |
-| `LondonOpen` | TRENDING | Time 07:00–09:00 UTC, break of Asian high/low |
-| `AsianRange` | RANGING, LOW_VOLATILITY | Time 00:00–09:00 UTC, entry at range extreme |
-
-### Strategy Selection
-
-```python
-# StrategyRegistry.get_best_for_regime(regime, performance_stats)
-1. Filter strategies that include `regime` in their optimal_regimes list
-2. Sort by historical win_rate and profit_factor (if performance stats available)
-3. Return highest-ranked strategy (fallback: first match)
-```
-
----
-
-## 5. Trade Execution Flow (Step-by-Step)
+## 2. Container Diagram
 
 ```
-1. AI Orchestrator analyses MarketContext → OrchestratorResult
-2. ConsensusEngine.is_actionable == True AND direction != NEUTRAL
-3. StrategyEngine selects best strategy for current regime
-4. Strategy.validate_signal(ctx, signal) → ValidationResult
-5. PositionSizer.calculate_size(balance, risk_pct, entry, sl, symbol) → lots
-6. RiskEngine.assess_trade(symbol, side, size, entry) → RiskAssessment
-   ├── REJECTED → log, alert, skip
-   └── APPROVED → continue
-7. ExecutionEngine.process_signal(signal, broker_account_id)
-   ├── Check news blackout window
-   ├── Check spread ≤ max_spread_pips
-   ├── Check correlated position limit
-   └── BrokerGateway.place_order(symbol, side, lots, sl, tp)
-8. Position opened → _TrackedPosition added to in-memory store
-9. Background loop: manage_position(pid, current_price) every tick
-   ├── move_breakeven → update SL
-   ├── partial_close → reduce position
-   ├── trail_stop → new SL
-   └── close → remove from store
-10. Analytics updated: win/loss, PnL, strategy performance stats
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           CONTAINERS & SERVICES                                    │
+│                                                                                   │
+│  ┌────────────────────┐    ┌────────────────────┐    ┌────────────────────────┐  │
+│  │    API Gateway     │    │  WebSocket Server  │    │     Frontend (Next.js) │  │
+│  │  (FastAPI + Auth)  │    │  (ConnectionManager)│    │   (SSR + Dashboard)   │  │
+│  └────────┬───────────┘    └────────┬───────────┘    └───────────┬────────────┘  │
+│           │                         │                            │               │
+│  ┌────────┴─────────────────────────┴────────────────────────────┴────────────┐ │
+│  │                         MESSAGE BUS (KAFKA)                                  │ │
+│  │   Topics: market.ticks, market.candles, trading.orders, trading.positions,  │ │
+│  │           risk.alerts, ai.signals, analytics.trades, system.events          │ │
+│  └────────┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────┘ │
+│           │          │          │          │          │          │              │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐             │
+│  │ Market │ │   AI   │ │Strategy│ │  Risk  │ │Execution│ │ Broker │             │
+│  │  Data  │ │Orch.   │ │ Engine │ │ Engine │ │ Engine  │ │Gateway │             │
+│  │Service │ │Service │ │Service │ │Service │ │Service  │ │Service │             │
+│  └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘             │
+│      │          │          │          │          │          │                   │
+│  ┌───┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────────┐   │
+│  │                         DATA STORES                                       │   │
+│  │                                                                           │   │
+│  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐              │   │
+│  │  │PostgreSQL │  │TimescaleDB│  │   Redis   │  │    S3     │              │   │
+│  │  │  (OLTP)   │  │(Time-Ser.)│  │(Cache/Pub)│  │(Objects)  │              │   │
+│  │  │ Users     │  │ Ticks     │  │ Prices     │  │ Models    │              │   │
+│  │  │ Orders    │  │ Candles   │  │ Sessions   │  │ Reports   │              │   │
+│  │  │ Positions │  │ Volatility│  │ Rate Lim.  │  │ Backtests │              │   │
+│  │  │ Risk State│  │           │  │ Pub/Sub    │  │ Archives  │              │   │
+│  │  └───────────┘  └───────────┘  └───────────┘  └───────────┘              │   │
+│  └───────────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+### Data Store Details
 
-## 6. Broker Integration (Plugin Architecture)
-
-```
-BrokerPlugin (abstract)
-├── OANDAPlugin      → REST API v20, streaming prices
-├── MT4Plugin        → Expert Advisor (TCP socket bridge)
-├── MT5Plugin        → MetaTrader5 Python library
-└── PaperTradingPlugin → In-memory simulated fills (for testing/backtesting)
-```
-
-### Plugin Interface
-
-```python
-class BrokerPlugin(ABC):
-    async def connect() -> None
-    async def disconnect() -> None
-    async def get_account_info() -> AccountInfo
-    async def place_order(symbol, side, quantity, ...) -> dict
-    async def close_position(position_id, ...) -> dict
-    async def get_open_positions() -> list[Position]
-    async def subscribe_prices(symbols, callback) -> None
-```
-
-Plugins are registered via `BrokerRegistry` and injected into `ExecutionEngine`.
-
----
-
-## 7. Data Flow
+| Store | Technology | Purpose | Data |
+|-------|-----------|---------|------|
+| **PostgreSQL** | PostgreSQL 16 + asyncpg | OLTP, relational state | Users, orders, positions, risk config, audit logs, AI decisions |
+| **TimescaleDB** | TimescaleDB (pg extension) | Time-series optimization | Ticks (hypertable), OHLCV candles, volatility metrics |
+| **Redis** | Redis 7 | Cache, Pub/Sub, rate limiting | Current prices, session state, rate limit counters, real-time pub/sub |
+| **S3** | AWS S3 / MinIO | Object storage | Trained ML models, backtest reports, historical archives |
 
 ### Kafka Topics
 
-| Topic | Producer | Consumer | Content |
-|---|---|---|---|
-| `market.ticks` | Broker Plugins | AI Agents, Market Data Service | Bid/Ask ticks |
-| `market.candles` | Market Data Service | Strategy Engine, AI Agents | OHLCV |
-| `trading.orders` | Execution Engine | Order Monitor | Order lifecycle |
-| `trading.positions` | Execution Engine | Risk Engine | Position updates |
-| `risk.alerts` | Risk Engine | Notification Service | Alerts |
-| `analytics.trades` | Execution Engine | Analytics Engine | Closed trades |
-
-### Redis Caching
-
-| Key Pattern | TTL | Content |
-|---|---|---|
-| `tick:{symbol}` | 5s | Latest bid/ask |
-| `candles:{symbol}:{tf}` | 60s | Last 500 candles |
-| `session:current` | 60s | Active session info |
-| `risk:state:{account_id}` | 30s | Risk metrics |
-| `ai:signal:{symbol}` | 30s | Last AI signal |
-
-### TimescaleDB Tables
-
-- `ticks` (hypertable, symbol + timestamp partition)
-- `candles_{M1,M5,M15,M30,H1,H4,D1}` (hypertables)
-- `orders`, `positions`, `deals`
-- `risk_states`, `risk_configs`, `risk_alerts`
-- `ai_decisions`, `strategy_performance`
+| Topic | Producer | Consumer(s) | Schema |
+|-------|----------|-------------|--------|
+| `market.ticks` | Broker plugins | Market Data Service, AI Agents | `{symbol, bid, ask, volume, timestamp}` |
+| `market.candles` | Market Data Service | AI Agents, Strategy Engine | `{symbol, timeframe, open, high, low, close, volume}` |
+| `trading.orders` | Execution Engine | Position Manager, Risk Engine | `{order_id, symbol, side, qty, price, status}` |
+| `trading.positions` | Position Manager | Risk Engine, Analytics | `{position_id, symbol, side, size, pnl, sl, tp}` |
+| `risk.alerts` | Risk Engine | Notification Service, Dashboard | `{level, category, message, details}` |
+| `ai.signals` | AI Orchestrator | Strategy Engine, Dashboard | `{symbol, direction, confidence, agents, rationale}` |
+| `analytics.trades` | Execution Engine | Analytics Service | `{trade_id, pnl, roi, duration, strategy}` |
+| `system.events` | All services | Monitoring, Audit | `{type, source, severity, data}` |
 
 ---
 
-## 8. Security Model
+## 3. Component Diagram
 
-### JWT Authentication
+### 3.1 Core Domain Modules
 
-- **Algorithm**: RS256 in production (asymmetric RSA 2048-bit), HS256 in testing
-- **Access token**: 15-minute expiry, contains `sub`, `role`, `permissions`
-- **Refresh token**: 7-day expiry, single-use rotation
-- **MFA**: TOTP (pyotp) with 8 backup codes
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           CORE DOMAIN MODULES                                     │
+│                                                                                   │
+│  ┌────────────────────────────────────────────────────────────────────────┐      │
+│  │                         AI ORCHESTRATOR                                  │      │
+│  │  ┌────────────────────────────────────────────────────────────────┐     │      │
+│  │  │                         Agent Manager                          │     │      │
+│  │  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐      │     │      │
+│  │  │  │Market  │ │  Trend │ │Liquid. │ │Volatility│ │Sentiment│      │     │      │
+│  │  │  │Struct. │ │  Agent │ │ Agent  │ │  Agent  │ │  Agent  │      │     │      │
+│  │  │  │ Agent  │ │        │ │        │ │         │ │         │      │     │      │
+│  │  │  └────────┘ └────────┘ └────────┘ └─────────┘ └─────────┘      │     │      │
+│  │  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                  │     │      │
+│  │  │  │Smart   │ │  Risk  │ │  Entry │ │  Exit  │                  │     │      │
+│  │  │  │Money   │ │  Agent │ │  Agent │ │  Agent │                  │     │      │
+│  │  │  │ Agent  │ │        │ │        │ │        │                  │     │      │
+│  │  │  └────────┘ └────────┘ └────────┘ └────────┘                  │     │      │
+│  │  └────────────────────────────────────────────────────────────────┘     │      │
+│  │                                                                           │      │
+│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │      │
+│  │  │   Consensus Engine   │  │   Trade Explainer    │  │Drift Detector│   │      │
+│  │  │  (Weighted Voting)   │  │  (XAI Narrative)     │  │ (20-win win) │   │      │
+│  │  └──────────────────────┘  └──────────────────────┘  └──────────────┘   │      │
+│  └────────────────────────────────────────────────────────────────────────┘      │
+│                                                                                   │
+│  ┌────────────────┐  ┌────────────────┐  ┌──────────────────┐  ┌────────────┐   │
+│  │  STRATEGY      │  │  RISK ENGINE   │  │ EXECUTION ENGINE │  │  BROKER    │   │
+│  │  ENGINE        │  │ (Authoritative)│  │                  │  │  GATEWAY   │   │
+│  │                │  │                │  │                  │  │            │   │
+│  │ • Registry (7) │  │ • Circuit      │  │ • Order Manager  │  │ • OANDA    │   │
+│  │ • Regime-based │  │   Breaker      │  │ • Position       │  │ • MT4/5    │   │
+│  │   selection    │  │ • Pre-trade    │  │   Manager        │  │ • FXCM     │   │
+│  │ • Strategy     │  │   checks       │  │ • Deal Recording │  │ • IB       │   │
+│  │   validation   │  │ • Real-time    │  │ • Trailing Stops │  │ • Paper    │   │
+│  │ • Performance  │  │   monitoring   │  │ • OCO Orders     │  │            │   │
+│  │   tracking     │  │ • Override API │  │ • Slippage       │  │            │   │
+│  └────────────────┘  └────────────────┘  └──────────────────┘  └────────────┘   │
+│                                                                                   │
+│  ┌────────────────┐  ┌────────────────┐  ┌──────────────────┐                    │
+│  │  MARKET DATA   │  │  NOTIFICATIONS │  │  SHARED INFRA    │                    │
+│  │                │  │                │  │                  │                    │
+│  │ • Tick ingest  │  │ • Slack        │  │ • DI Container   │                    │
+│  │ • Candle aggr. │  │ • Telegram     │  │ • UoW / Repos    │                    │
+│  │ • Session det. │  │ • Email        │  │ • Kafka Producers │                    │
+│  │ • SMC analysis │  │ • WebSocket    │  │ • Redis Cache    │                    │
+│  └────────────────┘  └────────────────┘  │ • Monitoring     │                    │
+│                                           │ • Security       │                    │
+│                                           └──────────────────┘                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
 
-### RBAC Roles
+### 3.2 Shared Infrastructure (Cross-Cutting)
 
-| Role | Permissions |
-|---|---|
-| `viewer` | Read positions, orders, risk state, market data |
-| `trader` | viewer + place/cancel orders, view AI signals |
-| `admin` | trader + update risk config, reset circuit breaker, emergency close |
-| `superadmin` | admin + user management, system configuration |
-
-### Audit Log
-
-Every API request is logged with: `user_id`, `action`, `endpoint`, `IP`, `timestamp`, `response_code`. Stored in PostgreSQL `audit_log` table, immutable (append-only trigger).
-
-### Additional Controls
-
-- **Rate Limiting**: slowapi middleware (100 req/min per IP, 10 login attempts/min)
-- **CORS**: configurable whitelist via `CORS_ORIGINS` setting
-- **TrustedHost**: enforced in production
-- **Input Validation**: Pydantic v2 with strict type checking on all schemas
-- **SQL Injection**: SQLAlchemy ORM with parameterised queries only
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          SHARED INFRASTRUCTURE MODULES                            │
+│                                                                                   │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────────┐  │
+│  │  DI Container       │  │  Database Layer      │  │  Security               │  │
+│  │                     │  │                     │  │                         │  │
+│  │ • Service registry  │  │ • SQLAlchemy async   │  │ • JWT (RS256/HS256)    │  │
+│  │ • Lifetime mgmt     │  │ • Unit of Work       │  │ • bcrypt password hash │  │
+│  │ • Lazy initialization│  │ • Repository pattern │  │ • MFA (TOTP)           │  │
+│  │ • Event publishing  │  │ • Alembic migrations │  │ • API keys (SHA-256)   │  │
+│  │                     │  │ • Connection pooling  │  │ • Fernet encryption    │  │
+│  └─────────────────────┘  └─────────────────────┘  │ • Rate limiting (Redis) │  │
+│                                                     │ • Audit logging         │  │
+│  ┌─────────────────────┐  ┌─────────────────────┐  └─────────────────────────┘  │
+│  │  Monitoring         │  │  Messaging           │                               │
+│  │                     │  │                     │                               │
+│  │ • structlog logging │  │ • Kafka producer     │                               │
+│  │ • 28 Prometheus     │  │ • Kafka consumer     │                               │
+│  │   metrics           │  │ • RabbitMQ (alt)     │                               │
+│  │ • OpenTelemetry     │  │ • Event serialization│                               │
+│  │   tracing           │  │ • CloudEvents schema │                               │
+│  │ • Jaeger exporter   │  │                     │                               │
+│  └─────────────────────┘  └─────────────────────┘                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 9. Deployment Architecture (K8s on AWS)
+## 4. Data Flow Diagrams
+
+### 4.1 Trade Lifecycle (End-to-End)
 
 ```
-                        AWS Route 53 (DNS)
-                               │
-                    AWS ALB (Application Load Balancer)
-                    ├── /api/v1/*  →  api-service
-                    └── /ws/*      →  websocket-service
+                                      TRADE LIFECYCLE
+                                      ═══════════════
 
-EKS Cluster
-├── Namespace: forex-trading
-│   ├── Deployment: api-service          (3 replicas, HPA 2-10)
-│   ├── Deployment: websocket-service    (2 replicas)
-│   ├── Deployment: risk-service         (2 replicas, StatefulSet)
-│   ├── Deployment: ai-service           (2 replicas, GPU optional)
-│   └── CronJob:    analytics-aggregator (every 1h)
-│
-├── Namespace: data
-│   ├── StatefulSet: postgresql         (1 primary + 2 replicas)
-│   ├── StatefulSet: redis-cluster      (6 nodes)
-│   └── StatefulSet: kafka              (3 brokers + 3 zookeepers)
-│
-└── Namespace: observability
-    ├── Deployment: prometheus
-    ├── Deployment: grafana
-    └── Deployment: jaeger
+  MARKET DATA               AI ANALYSIS              RISK CHECK
+  ────────────              ───────────              ──────────
 
-AWS Services Used:
-  RDS PostgreSQL (TimescaleDB extension) – managed primary/replica
-  ElastiCache Redis – managed cluster
-  MSK (Kafka) – managed
-  ECR – container registry
-  S3 – ML model artifacts, backtest results
-  Secrets Manager – JWT keys, broker credentials
-  CloudWatch – log aggregation
+  Broker Plugin ──ticks──►  AIOrchestrator ──req──►  RiskEngine
+       │                       │                        │
+       │                  ┌────┴────┐              ┌────┴────┐
+       │                  │ 9 Agents│              │ Pre-    │
+       │                  │ (parallel)             │ trade   │
+       │                  └────┬────┘              │ checks  │
+       │                       │                   │ (7 gates)│
+       │                  ┌────┴────┐              └────┬────┘
+       │                  │Consensus │                   │
+       │                  │ Engine   │              ┌────┴────┐
+       │                  └────┬────┘              │Approved │
+       │                       │                   │or       │
+       │                  ┌────┴────┐              │Rejected │
+       │                  │XAI      │              └────┬────┘
+       │                  │Explainer│                   │
+       │                  └────┬────┘                   │
+       │                       │                        │
+       │                       ▼                        │
+       │               OrchestratorResult               │
+       │             (signal + explanation)              │
+       │                       │                        │
+       │                       ▼                        │
+       │               STRATEGY ENGINE                  │
+       │               ┌──────────────┐                 │
+       │               │ Select best  │                 │
+       │               │ strategy for │                 │
+       │               │ regime       │                 │
+       │               └──────┬───────┘                 │
+       │                      │                         │
+       │                      ▼                         │
+       │               PositionSizer                    │
+       │          (ATR/Kelly position calc)              │
+       │                      │                         │
+       │                      ▼                         │
+       │               ┌──────────────────┐             │
+       └──────────────►│  RiskEngine      │◄────────────┘
+                       │  assess_trade()  │
+                       └────────┬─────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    │                       │
+               REJECTED                 APPROVED
+                    │                       │
+                    ▼                       ▼
+               ┌──────────┐          ┌──────────────┐
+               │ Log &    │          │ Execution    │
+               │ Alert    │          │ Engine       │
+               └──────────┘          │ process_     │
+                                     │ signal()     │
+                                     └──────┬───────┘
+                                            │
+                                     ┌──────┴───────┐
+                                     │ BrokerGateway│
+                                     │ place_order()│
+                                     └──────┬───────┘
+                                            │
+                                     ┌──────┴───────┐
+                                     │ Position     │
+                                     │ Manager      │
+                                     │ (monitoring) │
+                                     └──────┬───────┘
+                                            │
+                                     ┌──────┴───────┐
+                                     │ Trade Close  │
+                                     │ (SL/TP/manual)│
+                                     └──────┬───────┘
+                                            │
+                                     ┌──────┴───────┐
+                                     │ Analytics    │
+                                     │ (PnL, stats) │
+                                     └──────────────┘
 ```
 
-### Deployment Pipeline
+### 4.2 Tick Processing Flow
 
 ```
-git push → GitHub Actions →
-  1. pytest (unit + integration)
-  2. ruff lint + mypy type check
-  3. docker build + push to ECR
-  4. kubectl apply (rolling update, max unavailable=1)
-  5. smoke test against staging
-  6. promote to production
+Broker Plugin
+     │
+     │ (bid/ask)
+     ▼
+Kafka Topic: market.ticks
+     │
+     ├──► Market Data Service
+     │     ├── Store in TimescaleDB hypertable
+     │     ├── Aggregate into OHLCV candles
+     │     │     └──► Kafka: market.candles
+     │     ├── Detect market regime (session, volatility)
+     │     └──► Redis cache (latest price)
+     │
+     ├──► AI Agents (subscribed consumers)
+     │     └── Update technical indicators
+     │
+     ├──► Position Manager
+     │     └── Update unrealized P&L, check trailing stops
+     │
+     └──► Dashboard (via WebSocket broadcast)
+           └── Update real-time charts
 ```
+
+### 4.3 AI Signal Flow
+
+```
+MarketContext (candles, regime, metadata)
+     │
+     ▼
+AI Orchestrator
+     │
+     ├──► Agent 1 (Market Structure)
+     ├──► Agent 2 (Trend)
+     ├──► Agent 3 (Liquidity)
+     ├──► Agent 4 (Volatility)
+     ├──► Agent 5 (Sentiment)
+     ├──► Agent 6 (Smart Money)
+     ├──► Agent 7 (Risk AI)
+     ├──► Agent 8 (Entry AI)
+     └──► Agent 9 (Exit AI)
+          │
+          ▼ (all agents run concurrently)
+     AgentSignal[]
+          │
+          ▼
+     ConsensusEngine
+          │
+          ├── Compute weighted agreement
+          ├── Check agreement ≥ 0.60 threshold
+          ├── Check conflict ≤ 0.30 threshold
+          └──► ConsensusResult (direction, confidence, agreement)
+               │
+               ▼
+          TradeExplainer
+               │
+               ├── Generate SHAP-style narrative
+               ├── Attribute contribution per agent
+               └──► TradeExplanation (rationale, key factors)
+                    │
+                    ▼
+               OrchestratorResult
+                    │
+                    ├── Persist to AIDecision table
+                    ├── Publish to Kafka: ai.signals
+                    └── Return to caller
+```
+
+### 4.4 Order Execution Flow
+
+```
+TradeSignal (approved by Risk Engine)
+     │
+     ▼
+ExecutionEngine.process_signal()
+     │
+     ├── 1. Construct Order (symbol, side, qty, type)
+     ├── 2. Pre-submission validation
+     │      ├── Check news blackout window
+     │      ├── Check spread ≤ max_spread_pips
+     │      ├── Check correlated position limits
+     │      └── Check daily trade count
+     │
+     ├── 3. BrokerGateway.place_order()
+     │      └──► Broker-specific API call
+     │
+     ├── 4. Process fill response
+     │      ├── Full fill → Create Position
+     │      ├── Partial fill → Create Position (partial qty)
+     │      └── Rejected → Log, alert, retry?
+     │
+     ├── 5. Position tracking
+     │      ├── Add to in-memory store
+     │      ├── Subscribe to price updates
+     │      └── Begin trailing stop loop
+     │
+     └── 6. Analytics update
+            └── Record trade attempt (success/failure)
+```
+
+### 4.5 Risk Engine Decision Flow
+
+```
+Trade Assessment Request
+     │
+     ▼
+RiskEngine.assess_trade()
+     │
+     ├── 1. Circuit Breaker Check
+     │      ├── If OPEN → REJECT (circuit breaker active)
+     │      └── If HALF_OPEN → Allow 1 trade, then back to OPEN
+     │
+     ├── 2. Drawdown Check
+     │      ├── If daily_drawdown ≥ daily_limit → REJECT
+     │      ├── If total_drawdown ≥ max_limit → REJECT
+     │      └── Otherwise → Continue
+     │
+     ├── 3. Position Size Check
+     │      ├── Compute max_size = equity × max_position_size_pct%
+     │      ├── If requested > max_size → REJECT (or adjust down)
+     │      └── Otherwise → Continue
+     │
+     ├── 4. Total Exposure Check
+     │      ├── current_exposure + new_exposure > max_total_exposure% → REJECT
+     │      └── Otherwise → Continue
+     │
+     ├── 5. Symbol/Position Limits
+     │      ├── Open positions for symbol ≥ max_per_symbol → REJECT
+     │      ├── Total open positions ≥ max_positions → REJECT
+     │      └── Otherwise → Continue
+     │
+     ├── 6. Correlation Check
+     │      ├── Correlated exposure > max_correlated_exposure% → REJECT
+     │      └── Otherwise → Continue
+     │
+     ├── 7. Consecutive Losses Check
+     │      ├── consecutive_losses ≥ max_consecutive_losses → REJECT (cooling off)
+     │      └── Otherwise → Continue
+     │
+     └── 8. APPROVED
+            ├── Calculate risk_score
+            ├── Log assessment
+            ├── Update risk state
+            └── Return RiskAssessment(is_approved=true)
+```
+
+---
+
+## 5. Deployment Architecture
+
+### 5.1 AWS Infrastructure (EKS)
+
+```
+                         AWS Route53 (DNS)
+                              │
+                     AWS CloudFront (CDN)
+                              │
+                     AWS WAF (Web Application Firewall)
+                              │
+                     AWS ALB (Application Load Balancer)
+                      ├── /api/v1/*  →  Backend Service
+                      ├── /ws/*      →  WebSocket Service
+                      └── /*         →  Frontend Service
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         VPC (10.0.0.0/16)                                       │
+│                                                                                │
+│  ┌──────────────────── PUBLIC SUBNETS ─────────────────────────────────────┐  │
+│  │  • Public ALB (internet-facing)                                         │  │
+│  │  • NAT Gateway (for private subnet egress)                              │  │
+│  │  • Bastion Host (SSH access, locked down)                               │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                │
+│  ┌──────────────────── PRIVATE SUBNETS (Application) ──────────────────────┐  │
+│  │  EKS Cluster — Namespace: forex-trading                                  │  │
+│  │                                                                          │  │
+│  │  ┌────────────────────────────────────────────────────────────────────┐ │  │
+│  │  │  Deployment: backend-api (3 replicas, HPA 2-10)                  │ │  │
+│  │  │  Deployment: backend-worker (2 replicas, background tasks)       │ │  │
+│  │  │  Deployment: ai-service (2 replicas, GPU optional)               │ │  │
+│  │  │  Deployment: frontend (2 replicas)                               │ │  │
+│  │  │  StatefulSet: postgresql (1 primary + 2 replicas, Multi-AZ)      │ │  │
+│  │  │  StatefulSet: redis-cluster (6 nodes, 3 masters + 3 replicas)    │ │  │
+│  │  │  StatefulSet: kafka (3 brokers, KRaft mode)                      │ │  │
+│  │  │  Deployment: prometheus (1 replica, 30d retention)               │ │  │
+│  │  │  Deployment: grafana (1 replica, persistent storage)             │ │  │
+│  │  │  CronJob: analytics-aggregator (every 1h)                        │ │  │
+│  │  │  CronJob: model-retraining (daily at 02:00 UTC)                  │ │  │
+│  │  └────────────────────────────────────────────────────────────────────┘ │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                │
+│  ┌──────────────────── PRIVATE SUBNETS (Data) ────────────────────────────┐  │
+│  │  • RDS PostgreSQL (Multi-AZ, automated backups, 35-day retention)      │  │
+│  │  • ElastiCache Redis (Cluster mode, auto-failover)                     │  │
+│  │  • MSK Kafka (3 brokers, auto-rebalance)                                │  │
+│  │  • S3 Buckets: models, backtest-results, logs, reports                 │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+AWS Services:
+  • RDS PostgreSQL (TimescaleDB extension) — managed primary with read replicas
+  • ElastiCache Redis — managed cluster with auto-failover
+  • MSK (Managed Streaming for Kafka) — fully managed Kafka
+  • ECR — container image registry
+  • S3 — ML model artifacts, backtest results, logs
+  • Secrets Manager — JWT keys, broker credentials, API keys
+  • CloudWatch — log aggregation and metric alarms
+  • IAM — least-privilege service roles (IRSA)
+```
+
+### 5.2 Docker Compose (Local Development)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          DOCKER COMPOSE NETWORKS                              │
+│                                                                               │
+│  ┌──────────────────────────────────────────────────────────────────┐       │
+│  │  FRONTEND NETWORK (172.21.0.0/24) — DMZ Tier                     │       │
+│  │                                                                   │       │
+│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐ │       │
+│  │  │   Nginx      │────▶│   Frontend   │     │   (Internet)     │ │       │
+│  │  │  :80/443     │     │  :3000       │     │   ← Traffic     │ │       │
+│  │  └──────┬───────┘     └──────────────┘     └──────────────────┘ │       │
+│  └─────────┼────────────────────────────────────────────────────────┘       │
+│            │  (dual-homed)                                                     │
+│  ┌─────────┼──────────────────────────────────────────────────────────┐       │
+│  │  BACKEND NETWORK (172.20.0.0/24) — App Tier                        │       │
+│  │         │                                                           │       │
+│  │  ┌──────▼───────┐     ┌──────────────┐     ┌──────────────────┐   │       │
+│  │  │   Backend    │     │   Kafka      │     │   Prometheus     │   │       │
+│  │  │  :8000 (×2)  │     │  :9092       │     │   :9090          │   │       │
+│  │  └──────┬───────┘     └──────────────┘     └──────────────────┘   │       │
+│  │         │                                    ┌──────────────────┐  │       │
+│  │         │                                    │   Grafana        │  │       │
+│  │         │                                    │   :3001          │  │       │
+│  │         │                                    └──────────────────┘  │       │
+│  └─────────┼──────────────────────────────────────────────────────────┘       │
+│            │                                                                     │
+│  ┌─────────┼──────────────────────────────────────────────────────────┐       │
+│  │  DB NETWORK (172.22.0.0/24) — Data Tier (internal, no internet)    │       │
+│  │         │                                                           │       │
+│  │  ┌──────▼───────┐     ┌──────────────┐     ┌──────────────────┐   │       │
+│  │  │  PostgreSQL  │     │   Redis      │     │   Flower         │   │       │
+│  │  │  :5432       │     │  :6379       │     │   :5555          │   │       │
+│  │  └──────────────┘     └──────────────┘     └──────────────────┘   │       │
+│  └──────────────────────────────────────────────────────────────────┘       │
+│                                                                               │
+│  Security: All database ports bound to 127.0.0.1 only                        │
+│  Backend is dual-homed: backend_network + db_network                         │
+│  Frontend and DB tiers have NO direct connection                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 6. Design Decisions and Trade-offs
+
+### 6.1 Architecture Style: Event-Driven Microservices with Clean Architecture
+
+**Decision**: Hybrid architecture combining Event-Driven Architecture (EDA) for real-time data, microservices for independent scaling, and Clean Architecture within each service for testability.
+
+**Rationale**:
+- EDA provides loose coupling between market data producers and AI consumers
+- Clean Architecture boundaries make each service independently testable with mocked dependencies
+- DDD aggregates maintain consistency boundaries for complex trading domain logic
+
+**Trade-offs**:
+- Higher initial complexity than a monolith
+- Eventual consistency between services requires careful handling
+- Debugging across service boundaries is harder (mitigated by OpenTelemetry tracing)
+
+### 6.2 Authoritative Risk Engine
+
+**Decision**: The Risk Engine has absolute override power over all other components.
+
+**Rationale**:
+- In trading systems, capital preservation is the highest priority
+- Distributed consensus for risk decisions could lead to race conditions
+- Single authority simplifies the safety model and audit trail
+
+**Trade-offs**:
+- Risk Engine is a single point of failure for trading decisions (mitigated by persistence and health checks)
+- Risk Engine must be kept simple and thoroughly tested
+- Override API must be strictly authenticated (admin role required)
+
+### 6.3 Kafka for Event Streaming
+
+**Decision**: Use Kafka as the primary message bus instead of RabbitMQ.
+
+**Rationale**:
+- Kafka provides stronger ordering guarantees per partition (important for tick data)
+- Better throughput for high-volume market data
+- Built-in log compaction enables replay and recovery
+- KRaft mode eliminates Zookeeper dependency (simpler operations)
+
+**Trade-offs**:
+- Higher operational complexity than RabbitMQ
+- Larger resource footprint
+- RabbitMQ still available as alternative for development environments
+
+### 6.4 Hybrid Database Strategy
+
+**Decision**: Use PostgreSQL for OLTP, TimescaleDB for time-series, Redis for caching.
+
+**Rationale**:
+- Each database optimized for its access pattern
+- TimescaleDB as PostgreSQL extension avoids operational complexity of separate TSDB
+- Redis provides sub-millisecond cache lookups critical for trading
+
+**Trade-offs**:
+- Three data stores to manage and back up
+- Cross-store consistency requires application-level coordination
+- Memory usage for Redis must be carefully provisioned
+
+### 6.5 Multi-Agent AI with Weighted Consensus
+
+**Decision**: 9 specialized agents with dynamic weighted consensus instead of a single ML model.
+
+**Rationale**:
+- Specialized agents are easier to develop, test, and improve independently
+- Weighted consensus provides natural explainability (which agent contributed how much)
+- Dynamic weights allow the system to adapt to changing market regimes
+- Individual agent failures don't halt the system (graceful degradation)
+
+**Trade-offs**:
+- Higher computational cost (9 inferences per trading decision)
+- Consensus parameters require tuning per market regime
+- Agent disagreement adds latency to the decision pipeline
+
+### 6.6 RS256 JWT with Audience Binding
+
+**Decision**: Use RS256 (asymmetric) in production with audience-based token type binding.
+
+**Rationale**:
+- Asymmetric keys allow services to verify tokens without holding the signing key
+- Audience binding prevents access tokens from being used as refresh tokens and vice versa
+- Short-lived access tokens (15 min) limit window of compromise
+
+**Trade-offs**:
+- Key rotation is more complex than HS256
+- Token revocation requires Redis blacklist (additional infrastructure dependency)
+- Refresh token rotation adds some complexity to client implementations
+
+### 6.7 Three-Tier Docker Network Isolation
+
+**Decision**: Three isolated Docker networks (frontend, backend, database) with the backend dual-homed.
+
+**Rationale**:
+- Database tier has no external network access (defense in depth)
+- Backend is the only bridge between the web and data tiers
+- Compromise of the frontend does not expose the database
+
+**Trade-offs**:
+- More complex Docker Compose configuration
+- Backend must be configured with multiple network interfaces
+- Some debugging tools cannot reach the database directly
+
+### 6.8 ATR-Based Position Sizing
+
+**Decision**: Use ATR (Average True Range) for position sizing instead of fixed lot sizes.
+
+**Rationale**:
+- ATR adapts to current market volatility
+- Same strategy parameters work across different currency pairs
+- Risk-per-trade stays consistent regardless of market conditions
+- Aligns with institutional position sizing practices
+
+**Trade-offs**:
+- ATR is a lagging indicator (lookback period dependent)
+- Very low ATR environments can lead to oversized positions (mitigated by max_position_size_pct cap)
+- Requires accurate tick/candle data for correct calculation
+
+### 6.9 Structlog for Structured Logging
+
+**Decision**: Use structlog instead of standard Python logging.
+
+**Rationale**:
+- JSON output format integrates natively with log aggregation systems (ELK, CloudWatch)
+- Context variables (request_id, user_id) are automatically bound to all log entries
+- Better performance for structured logging than json.dumps on every call
+
+**Trade-offs**:
+- Additional dependency
+- Team must learn structlog idioms
+- Console/log-file readability requires JSON pretty-printing tools
+
+### 6.10 Monorepo Layout
+
+**Decision**: Single repository with `backend/`, `frontend/`, `ml/`, `infrastructure/` directories.
+
+**Rationale**:
+- Atomic commits across all layers (API change + frontend update + infra change)
+- Shared CI/CD configuration
+- Simplified developer onboarding (one repo to clone)
+- Cross-cutting changes are visible in a single PR
+
+**Trade-offs**:
+- Larger clone size
+- CI/CD must be selective about what to test on each change
+- Requires discipline to maintain clean module boundaries
+
+---
+
+## Appendix: Key Metrics
+
+| System | Target | Measurement |
+|--------|--------|-------------|
+| Signal-to-order latency | < 50ms | Prometheus histogram |
+| System uptime | 99.9% | Prometheus + CloudWatch |
+| Max drawdown | 15% (configurable) | Risk Engine |
+| Decision explainability | 100% of trades | XAI log check |
+| Recovery from failure | < 30 seconds | K8s self-healing + probes |
+| AI agreement rate | > 60% | Consensus engine metric |
+| Test coverage | > 80% | pytest-cov report |
+| API P99 latency | < 500ms | Prometheus histogram |

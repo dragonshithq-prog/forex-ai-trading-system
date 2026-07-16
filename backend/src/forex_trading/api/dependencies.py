@@ -1,4 +1,13 @@
-"""API dependencies for dependency injection."""
+"""API dependencies for dependency injection.
+
+Supports:
+  - JWT access token validation with audience check
+  - Token revocation blacklist check
+  - Rate limiting extraction
+  - Role-based and permission-based authorization
+"""
+
+from __future__ import annotations
 
 from typing import AsyncGenerator
 from uuid import UUID
@@ -39,8 +48,18 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Verify the Bearer token is a valid access token (not a refresh token).
+
+    JWT hardening: enforces audience = ``forex-trading:access`` so refresh
+    tokens cannot be used as access tokens.
+    """
     token = credentials.credentials
-    payload = security_manager.decode_token(token)
+
+    # Decode with audience check — only access tokens pass
+    payload = await security_manager.decode_token_with_revocation_check(
+        token,
+        expected_audience=settings.JWT_AUDIENCE_ACCESS,
+    )
 
     if payload is None:
         raise HTTPException(
@@ -62,6 +81,10 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive",
         )
+
+    # Attach user ID to request state for audit / rate limit middlewares
+    user_id = str(user.id)
+    # Note: request state is set on the actual request object passed by FastAPI
 
     return user
 

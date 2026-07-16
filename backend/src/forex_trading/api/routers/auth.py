@@ -21,13 +21,16 @@ from forex_trading.api.schemas.auth import (
     TokenResponse,
 )
 from forex_trading.api.schemas.user import UserResponse
-from forex_trading.core.security import security_manager
+from forex_trading.config import get_settings
+from forex_trading.core.security import security_manager, token_revocation_service
 from forex_trading.shared.database.crud_user import (
     user_repository,
     user_session_repository,
     password_reset_repository,
 )
 from forex_trading.shared.database.models_user import User
+
+settings = get_settings()
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -39,7 +42,18 @@ def _generate_backup_codes() -> list[str]:
     return [secrets.token_hex(_BACKUP_CODE_LENGTH // 2) for _ in range(_BACKUP_CODE_COUNT)]
 
 
-@router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=LoginResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user",
+    description="Create a new user account and return JWT token pair",
+    operation_id="register_user",
+    responses={
+        201: {"description": "User registered successfully"},
+        409: {"description": "Email or username already registered"},
+    },
+)
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
@@ -85,7 +99,13 @@ async def register(
     )
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    summary="Login",
+    description="Authenticate with username/email and password, returns JWT token pair",
+    operation_id="login",
+)
 async def login(
     request: LoginRequest,
     request_obj: Request,
@@ -151,12 +171,22 @@ async def login(
     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token",
+    description="Exchange a valid refresh token for a new JWT token pair",
+    operation_id="refresh_token",
+)
 async def refresh_token(
     request: RefreshRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    payload = security_manager.decode_token(request.refresh_token)
+    # Validate with audience check — only refresh tokens pass
+    payload = await security_manager.decode_token_with_revocation_check(
+        request.refresh_token,
+        expected_audience=settings.JWT_AUDIENCE_REFRESH,
+    )
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -176,6 +206,13 @@ async def refresh_token(
             detail="Account is inactive",
         )
 
+    # Revoke the old refresh token
+    if payload.jti:
+        await token_revocation_service.revoke(
+            payload.jti,
+            expire_at=payload.exp,
+        )
+
     token_pair = security_manager.create_token_pair(
         user_id=str(user.id),
         role=user.role.value,
@@ -188,18 +225,41 @@ async def refresh_token(
     )
 
 
-@router.post("/logout", status_code=status.HTTP_200_OK)
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    summary="Logout",
+    description="Revoke all active sessions and invalidate current token",
+    operation_id="logout",
+)
 async def logout(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     revoked = await user_session_repository.revoke_all_user_sessions(
         db, user_id=current_user.id
     )
+
+    # Also revoke the current access token's JTI if available
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        # Decode to extract JTI and revoke it
+        payload = security_manager.decode_token(token)
+        if payload and payload.jti:
+            await token_revocation_service.revoke(payload.jti)
+
     return {"message": "Successfully logged out", "sessions_revoked": revoked}
 
 
-@router.post("/mfa/setup", response_model=MFASetupResponse)
+@router.post(
+    "/mfa/setup",
+    response_model=MFASetupResponse,
+    summary="Setup MFA",
+    description="Generate MFA secret and backup codes for two-factor authentication",
+    operation_id="setup_mfa",
+)
 async def setup_mfa(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -231,7 +291,13 @@ async def setup_mfa(
     )
 
 
-@router.post("/mfa/verify", status_code=status.HTTP_200_OK)
+@router.post(
+    "/mfa/verify",
+    status_code=status.HTTP_200_OK,
+    summary="Verify MFA",
+    description="Verify an MFA code and enable two-factor authentication",
+    operation_id="verify_mfa",
+)
 async def verify_mfa(
     request: MFAVerifyRequest,
     current_user: User = Depends(get_current_user),
@@ -259,7 +325,13 @@ async def verify_mfa(
     return {"message": "MFA enabled successfully"}
 
 
-@router.post("/password/change", status_code=status.HTTP_200_OK)
+@router.post(
+    "/password/change",
+    status_code=status.HTTP_200_OK,
+    summary="Change password",
+    description="Change the current user's password (requires current password)",
+    operation_id="change_password",
+)
 async def change_password(
     request: PasswordChangeRequest,
     current_user: User = Depends(get_current_user),
@@ -289,7 +361,13 @@ async def change_password(
     return {"message": "Password changed successfully"}
 
 
-@router.post("/password-reset/request", status_code=status.HTTP_200_OK)
+@router.post(
+    "/password-reset/request",
+    status_code=status.HTTP_200_OK,
+    summary="Request password reset",
+    description="Request a password reset token via email",
+    operation_id="request_password_reset",
+)
 async def request_password_reset(
     request: PasswordResetRequest,
     db: AsyncSession = Depends(get_db),
@@ -306,7 +384,13 @@ async def request_password_reset(
     }
 
 
-@router.post("/password-reset/reset", status_code=status.HTTP_200_OK)
+@router.post(
+    "/password-reset/reset",
+    status_code=status.HTTP_200_OK,
+    summary="Reset password",
+    description="Reset password using a valid reset token",
+    operation_id="reset_password",
+)
 async def reset_password(
     request: PasswordResetConfirm,
     db: AsyncSession = Depends(get_db),
@@ -338,7 +422,13 @@ async def reset_password(
     return {"message": "Password reset successfully"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get current user",
+    description="Retrieve the authenticated user's profile",
+    operation_id="get_current_user",
+)
 async def get_me(
     current_user: User = Depends(get_current_user),
 ) -> UserResponse:

@@ -1,1 +1,1 @@
-"""Shared messaging module (RabbitMQ/Kafka)."""
+"""Messaging infrastructure — Kafka event bus and outbox integration."""

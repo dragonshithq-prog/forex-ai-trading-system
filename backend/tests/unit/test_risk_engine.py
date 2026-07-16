@@ -14,11 +14,9 @@ from uuid import uuid4
 import pytest
 
 from forex_trading.risk.engine import (
-    Position,
     RiskAssessment,
     RiskEngine,
     RiskLimits,
-    RiskState,
 )
 
 # ---------------------------------------------------------------------------

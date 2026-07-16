@@ -158,6 +158,19 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Backups
+backups/
+
+# SSL certificates (generated, never commit)
+docker/nginx/ssl/*.pem
+docker/nginx/ssl/*.crt
+docker/nginx/ssl/*.key
+
+# Secrets (not .example files)
+docker/.env
+*.secrets.yaml
+!infrastructure/k8s/backend/secrets.yaml
+
 # Node.js (frontend)
 node_modules/
 .next/

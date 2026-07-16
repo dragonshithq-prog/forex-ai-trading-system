@@ -264,7 +264,7 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=high || true
 
-      # Container scanning: trivy
+      # Container scanning: trivy (filesystem)
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -282,6 +282,19 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
           category: trivy
+
+      # Dockerfile lint: hadolint
+      - name: Lint Dockerfiles (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.backend
+          failure-threshold: warning
+
+      - name: Lint Dockerfile (backend/)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: backend/Dockerfile
+          failure-threshold: warning
 
       # Secret detection: gitleaks
       - name: Run Gitleaks (secret detection)

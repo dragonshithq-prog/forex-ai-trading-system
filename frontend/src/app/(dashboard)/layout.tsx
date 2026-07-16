@@ -2,6 +2,12 @@
 import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { ParticleBackground } from '@/components/effects/ParticleBackground';
+import { PageTransition } from '@/components/effects/PageTransition';
+import { TickerTape } from '@/components/effects/TickerTape';
+import { AchievementToast } from '@/components/effects/AchievementToast';
+import { TradeNotification } from '@/components/effects/TradeNotification';
+import { AudioManager } from '@/components/effects/AudioManager';
 import { useWSConnection } from '@/lib/websocket';
 import { useTradingStore } from '@/lib/store/tradingStore';
 import { api } from '@/lib/api';
@@ -26,8 +32,12 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Initialize WS + account data */}
+      {/* Global effects */}
       <DashboardInit />
+      <ParticleBackground />
+      <AudioManager />
+      <AchievementToast />
+      <TradeNotification />
 
       {/* Sidebar */}
       <Sidebar
@@ -36,19 +46,26 @@ export default function DashboardLayout({
       />
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-[1]">
         {/* Top bar */}
         <TopBar sidebarCollapsed={sidebarCollapsed} />
 
+        {/* Ticker tape */}
+        <div className="pt-[60px]">
+          <TickerTape />
+        </div>
+
         {/* Page content */}
         <main
-          className="flex-1 overflow-y-auto pt-[60px]"
+          className="flex-1 overflow-y-auto"
           id="main-content"
           role="main"
         >
-          <div className="p-4 min-h-full">
-            {children}
-          </div>
+          <PageTransition>
+            <div className="p-4 min-h-full">
+              {children}
+            </div>
+          </PageTransition>
         </main>
       </div>
     </div>

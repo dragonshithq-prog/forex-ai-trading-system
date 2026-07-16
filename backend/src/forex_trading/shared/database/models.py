@@ -19,6 +19,8 @@ from forex_trading.shared.database.models_trading import (
     Order,
     Position,
     Deal,
+    EventOutbox,
+    EventOutboxDeadLetter,
     OrderSide,
     OrderType,
     OrderStatus,
@@ -54,6 +56,22 @@ from forex_trading.shared.database.models_notification import (
     NotificationChannel,
     NotificationPriority,
 )
+from forex_trading.shared.database.models_compliance import (
+    ConsentRecord,
+    ConsentType,
+    ConsentStatus,
+    PIIInventory,
+    PIICategory,
+    DataRetentionPurge,
+    DataRetentionCategory,
+    PurgeStatus,
+    AuditLogChain,
+    RegulatoryReport,
+    RiskDisclosure,
+    ArchiveManifest,
+    DataClassificationRule,
+    ClassificationLevel,
+)
 
 __all__ = [
     # Base
@@ -73,6 +91,8 @@ __all__ = [
     "Order",
     "Position",
     "Deal",
+    "EventOutbox",
+    "EventOutboxDeadLetter",
     "OrderSide",
     "OrderType",
     "OrderStatus",
@@ -103,4 +123,19 @@ __all__ = [
     "NotificationPreference",
     "NotificationChannel",
     "NotificationPriority",
+    # Compliance
+    "ConsentRecord",
+    "ConsentType",
+    "ConsentStatus",
+    "PIIInventory",
+    "PIICategory",
+    "DataRetentionPurge",
+    "DataRetentionCategory",
+    "PurgeStatus",
+    "AuditLogChain",
+    "RegulatoryReport",
+    "RiskDisclosure",
+    "ArchiveManifest",
+    "DataClassificationRule",
+    "ClassificationLevel",
 ]
