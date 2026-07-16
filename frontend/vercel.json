@@ -4,7 +4,7 @@
   "outputDirectory": ".next",
   "installCommand": "npm install",
   "env": {
-    "NEXT_PUBLIC_API_URL": "https://localhost:8000",
-    "NEXT_PUBLIC_WS_URL": "ws://localhost:8000/ws"
+    "NEXT_PUBLIC_API_URL": "https://forex-trading-backend.onrender.com",
+    "NEXT_PUBLIC_WS_URL": "wss://forex-trading-backend.onrender.com/ws"
   }
 }
